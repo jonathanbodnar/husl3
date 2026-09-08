@@ -1,0 +1,42 @@
+{
+  "name": "vibe-distribution-app",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "concurrently -k -n server,web -c blue,green \"npm:dev:server\" \"npm:dev:web\"",
+    "dev:server": "tsx watch server/index.ts",
+    "dev:web": "vite --config vite.config.ts",
+    "build": "npm run build:web && npm run build:server",
+    "build:web": "vite build --config vite.config.ts",
+    "build:server": "tsc -p tsconfig.server.json && node -e \"require('fs').mkdirSync('dist/server/server/brain',{recursive:true});require('fs').copyFileSync('server/brain/brain.json','dist/server/server/brain/brain.json')\"",
+    "typecheck": "tsc -p tsconfig.server.json --noEmit && tsc -p tsconfig.web.json --noEmit",
+    "start": "node dist/server/server/index.js",
+    "sync-brain": "bash scripts/sync-brain.sh"
+  },
+  "dependencies": {
+    "@hono/node-server": "^1.13.0",
+    "cheerio": "^1.0.0",
+    "hono": "^4.6.0",
+    "openai": "^5.0.0",
+    "pg": "^8.13.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/pg": "^8.11.0",
+    "@types/react": "^18.3.0",
+    "@types/react-dom": "^18.3.0",
+    "@vitejs/plugin-react": "^4.3.0",
+    "concurrently": "^9.0.0",
+    "react": "^18.3.0",
+    "react-dom": "^18.3.0",
+    "react-markdown": "^9.0.0",
+    "remark-gfm": "^4.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0",
+    "vite": "^6.0.0"
+  }
+}

@@ -1,0 +1,59 @@
+# Vibe Distribution — the app
+
+A conversational distribution audit for SaaS founders. Enter your site; the guide reads it, places you on the journey (first users → activation → monetization → retention → acquisition → scale), asks what it cannot infer, and keeps a **what-to-do** list in a side panel. Connect your **Postgres/Supabase** database and **GitHub** repository and it measures instead of guessing: what the data says, what you already shipped that the data cannot show yet, and what to instrument. One click writes a **coding-agent prompt** per item.
+
+No accounts. Session state lives in the browser; credentials travel only inside the requests that need them and are never stored server-side.
+
+The evidence is the **Vibe Distribution brain** (`server/brain/brain.json`): 20 principles, 31 measured effects with confidence labels, 45 laws, 22 measurement traps, 45 killed ideas, 25 audits, 40 metric recipes and a 7-stage journey, distilled from one AI SaaS's first 97 days. It is built in the [vibe-distribution](../vibe-distribution) repo and copied here with `npm run sync-brain`. Never edit it here.
+
+## Models and cost
+
+| Role | Default | Why |
+|---|---|---|
+| Conversation (every turn) | `deepseek-v4-pro` via `https://api.deepseek.com/v1` | The whole brain (~50k tokens) sits first in the system prompt, byte-identical for every visitor, so nearly all of it is a **cache hit** on every turn. Cached input is the price that matters. |
+| Prompt writer (one call per audit) | `qwen3.8-max-0902` via Alibaba Cloud Model Studio (US endpoint) | Post-trained for coding and agentic work; writes the prompts a coding agent will execute. |
+
+Both endpoints are OpenAI-compatible, so any provider works by changing `*_BASE_URL`, `*_MODEL` and the key (OpenRouter ids: `deepseek/deepseek-v4-pro`, `qwen/qwen3.8-max-0902`; Kimi K3 or a Claude proxy fit the same slot). Prices are configurable and only feed the cost meter. Design target: **≈15–20¢ per audit** for the pair.
+
+## Run
+
+```bash
+cp .env.example .env      # add DEEPSEEK_API_KEY and DASHSCOPE_API_KEY
+npm install
+npm run dev               # API on :8787, web on :5173 (proxied)
+```
+
+Production: `npm run build && npm start` (serves the built client and the API on `PORT`, default 8787). The `Dockerfile` and `railway.json` deploy as-is on Railway (`railway up`), or anywhere that runs a container. Set the same variables there.
+
+## Protecting your keys
+
+There are no accounts, so the operator's model keys are what to protect:
+
+- `ACCESS_CODE` — optional shared code; the client asks once and sends it with every request.
+- `DAILY_BUDGET_USD` — hard stop per UTC day across all visitors (in-memory).
+- `RATE_*_PER_HOUR` — per-IP limits for chat turns, scans and prompt calls.
+- Server-side fetches refuse private and link-local addresses; SQL runs only as a single `SELECT`/`WITH`/`EXPLAIN` inside a read-only transaction with a 20-second timeout and a 200-row cap.
+
+## Layout
+
+```
+server/           Hono API (Node 22)
+  brain/          brain.json snapshot, renderer (brain → cached prefix), system prompt
+  llm/            OpenAI-compatible streaming client (tools, usage, per-vendor thinking switch)
+  tools/          update_todos, run_sql, db_describe_table, fetch_page, github_*
+  site/           site scanner (home + pricing/signup/login/features/docs, CTAs, prices, forms, stack)
+  db/             read-only Postgres introspection and queries
+  github/         repo digest, commits, files
+  prompts/        one-call prompt writer
+  chat.ts         the turn loop (stream → tools → stream …)
+web/              Vite + React client (chat, what-to-do panel, connect dialog, cost meter)
+shared/types.ts   contract between the two
+```
+
+## Brain updates
+
+```bash
+npm run sync-brain    # copies ../vibe-distribution/brain/brain.json
+```
+
+The renderer turns the JSON into a compact text prefix (`server/brain/render.ts`); the version prints on startup and in `/api/health`.
