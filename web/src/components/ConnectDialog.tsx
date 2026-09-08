@@ -68,7 +68,7 @@ export function ConnectDialog(props: {
             </div>
           </section>
           <section>
-            <label className="rowb" style={{ cursor: "pointer" }}>
+            <label className="rowb remember" style={{ cursor: "pointer" }}>
               <input type="checkbox" checked={remember} onChange={(e) => setRemember(e.target.checked)} />
               <span>Remember these credentials on this device (otherwise they are forgotten when this tab closes)</span>
             </label>

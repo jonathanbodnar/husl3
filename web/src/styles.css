@@ -177,6 +177,8 @@ h1,h2,h3,h4,.display{font-family:var(--display);font-weight:600;letter-spacing:-
 .modal label{font-size:.82rem;color:var(--muted)}
 .modal input[type=text],.modal input[type=password],.modal input[type=url]{width:100%;border:1px solid var(--line-2);border-radius:9px;padding:.55rem .7rem;background:var(--bg);font-family:var(--mono);font-size:.85rem}
 .modal .rowb{display:flex;gap:.6rem;align-items:center;flex-wrap:wrap}
+.modal .remember{flex-wrap:nowrap;align-items:flex-start;color:var(--ink-2);font-size:.88rem}
+.modal .remember input{margin-top:.2rem}
 .modal .ok{color:var(--accent-ink);font-size:.88rem}
 .modal .bad{color:var(--red);font-size:.88rem}
 .modal .note{font-size:.8rem;color:var(--muted);line-height:1.45}
