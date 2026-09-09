@@ -56,7 +56,14 @@ function throttle(kind: "chat" | "scan" | "prompts", ip: string, what: string): 
   return null;
 }
 
-const errJson = (message: string, status: 400 | 401 | 403 | 413 | 429 | 500 | 502 | 503) => Response.json({ error: message }, { status });
+const errJson = (message: string, status: 400 | 401 | 403 | 413 | 422 | 429 | 500 | 502 | 503) => Response.json({ error: message }, { status });
+
+/**
+ * "We could not use what you gave us" is a 4xx, not a bad gateway. It also has to be a 4xx in
+ * practice: a CDN in front of this app replaces 5xx bodies with its own error page, which would
+ * throw away the sentence telling the founder what to fix.
+ */
+const targetError = (message: string) => errJson(message, 422);
 const msg = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 const MAX_BODY_BYTES = 6_000_000;
@@ -126,7 +133,7 @@ app.post("/api/site/scan", async (c) => {
   if (throttled) return throttled;
   const { url } = await body<{ url?: string }>(c);
   if (!url || typeof url !== "string") return errJson("url is required", 400);
-  try { return c.json(await scanSite(url)); } catch (e) { return errJson(`Could not read that site: ${msg(e)}`, 502); }
+  try { return c.json(await scanSite(url)); } catch (e) { return targetError(`Could not read that site: ${msg(e)}`); }
 });
 
 app.route("/api/auth", auth);
@@ -135,14 +142,14 @@ app.get("/api/github/repos", async (c) => {
   { const throttled = throttle("scan", ipOf(c), "requests"); if (throttled) return throttled; }
   const token = c.req.header("x-github-token");
   if (!token) return errJson("x-github-token header is required", 400);
-  try { return c.json(await listRepos(token)); } catch (e) { return errJson(msg(e), 502); }
+  try { return c.json(await listRepos(token)); } catch (e) { return targetError(msg(e)); }
 });
 
 app.get("/api/supabase/projects", async (c) => {
   { const throttled = throttle("scan", ipOf(c), "requests"); if (throttled) return throttled; }
   const token = c.req.header("x-supabase-token");
   if (!token) return errJson("x-supabase-token header is required", 400);
-  try { return c.json(await sbListProjects(token)); } catch (e) { return errJson(msg(e), 502); }
+  try { return c.json(await sbListProjects(token)); } catch (e) { return targetError(msg(e)); }
 });
 
 app.post("/api/db/introspect", async (c) => {
@@ -153,13 +160,13 @@ app.post("/api/db/introspect", async (c) => {
     if (conn.connectionString) conn.connectionString = validateConnectionString(String(conn.connectionString));
     else if (!conn.supabase?.accessToken || !conn.supabase.projectRef) return errJson("Provide a connection string or a Supabase project", 400);
     return c.json(await introspect(conn));
-  } catch (e) { return errJson(`Could not connect: ${redact(msg(e))}`, 502); }
+  } catch (e) { return targetError(`Could not connect: ${redact(msg(e))}`); }
 });
 
 app.post("/api/github/introspect", async (c) => {
   { const throttled = throttle("scan", ipOf(c), "requests"); if (throttled) return throttled; }
   const { repo, token } = await body<{ repo?: string; token?: string }>(c);
-  try { return c.json(await introspectRepo(parseRepo(String(repo ?? "")), token?.trim() || undefined)); } catch (e) { return errJson(msg(e), 502); }
+  try { return c.json(await introspectRepo(parseRepo(String(repo ?? "")), token?.trim() || undefined)); } catch (e) { return targetError(msg(e)); }
 });
 
 app.post("/api/chat", async (c) => {
@@ -209,7 +216,7 @@ app.post("/api/prompts", async (c) => {
   } catch (e) {
     // A reply that failed to parse was still generated and still billed by the provider.
     reservation.settle((e as { billedUsd?: number }).billedUsd ?? 0);
-    return errJson(msg(e), 502);
+    return targetError(msg(e));
   }
 });
 
