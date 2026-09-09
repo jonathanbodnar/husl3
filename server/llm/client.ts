@@ -15,7 +15,7 @@ export function thinkingBody(cfg: ProviderConfig): Record<string, unknown> {
   const host = safeHost(cfg.baseURL);
   const on = cfg.thinking === "on";
   if (host.includes("deepseek")) return { thinking: { type: on ? "enabled" : "disabled" } };
-  if (host.includes("aliyuncs")) return { enable_thinking: on };
+  if (host.includes("aliyuncs")) return { enable_thinking: on, ...(on && cfg.thinkingBudget > 0 ? { thinking_budget: cfg.thinkingBudget } : {}) };
   if (host.includes("openrouter")) return { reasoning: { enabled: on } };
   if (host.includes("moonshot")) return on ? {} : { thinking: { type: "disabled" } };
   return {};

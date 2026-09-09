@@ -34,6 +34,8 @@ export interface ProviderConfig {
   baseURL: string;
   model: string;
   thinking: "on" | "off";
+  /** Max reasoning tokens when thinking is on (0 = provider default). Honored by Model Studio (thinking_budget). */
+  thinkingBudget: number;
   jsonMode: boolean;
   prices: ModelPrices; // USD per million tokens
 }
@@ -46,6 +48,7 @@ export const env = {
     baseURL: str("CHAT_BASE_URL", "https://api.deepseek.com/v1"),
     model: str("CHAT_MODEL", "deepseek-v4-pro"),
     thinking: onoff("CHAT_THINKING", "off"),
+    thinkingBudget: num("CHAT_THINKING_BUDGET", 0),
     jsonMode: false,
     prices: { hit: num("CHAT_PRICE_HIT", 0.044), miss: num("CHAT_PRICE_MISS", 1.32), out: num("CHAT_PRICE_OUT", 3.96) },
   }),
@@ -54,7 +57,8 @@ export const env = {
     apiKey: str("DASHSCOPE_API_KEY") || str("PROMPT_API_KEY"),
     baseURL: str("PROMPT_BASE_URL", "https://dashscope-us.aliyuncs.com/compatible-mode/v1"),
     model: str("PROMPT_MODEL", "qwen3.8-max-0902"),
-    thinking: onoff("PROMPT_THINKING", "on"),
+    thinking: onoff("PROMPT_THINKING", "off"),
+    thinkingBudget: num("PROMPT_THINKING_BUDGET", 0),
     jsonMode: onoff("PROMPT_JSON_MODE", "on") === "on",
     prices: { hit: num("PROMPT_PRICE_CACHED", 0.25), miss: num("PROMPT_PRICE_IN", 2.0), out: num("PROMPT_PRICE_OUT", 6.0) },
   }),
