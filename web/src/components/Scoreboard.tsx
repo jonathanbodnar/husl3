@@ -120,11 +120,11 @@ function StatTile({ spec, result, brainIndex }: { spec: StatSpec; result?: StatR
         : spec.kind === "rate" && result.numerator != null ? (
           <div className="tvalue">
             {result.smallN
-              ? <><span className="hero">{fmtInt(result.numerator)}<span className="of"> of {fmtInt(result.denominator ?? 0)}</span></span><div className="muted small">too few to quote as a share</div></>
-              : <><span className="hero">{pct(result.value ?? 0)}</span><div className="muted small">{fmtInt(result.numerator)} of {fmtInt(result.denominator ?? 0)}</div></>}
+              ? <><span className="statv">{fmtInt(result.numerator)}<span className="of"> of {fmtInt(result.denominator ?? 0)}</span></span><div className="muted small">too few to quote as a share</div></>
+              : <><span className="statv">{pct(result.value ?? 0)}</span><div className="muted small">{fmtInt(result.numerator)} of {fmtInt(result.denominator ?? 0)}</div></>}
           </div>
         ) : (
-          <div className="tvalue"><span className="hero">{fmtValue(result.value ?? 0, spec.unit)}</span>{result.n != null && <div className="muted small">n = {fmtInt(result.n)}</div>}</div>
+          <div className="tvalue"><span className="statv">{fmtValue(result.value ?? 0, spec.unit)}</span>{result.n != null && <div className="muted small">n = {fmtInt(result.n)}</div>}</div>
         )}
       {spec.caveat && <div className="muted small">{spec.caveat}</div>}
       <div className="tfoot">
@@ -156,7 +156,7 @@ function Series({ points, unit, droppedToday }: { points: { day: string; value: 
   return (
     <div className="series">
       <div className="tvalue">
-        <span className="hero">{fmtValue(shown.value, unit)}</span>
+        <span className="statv">{fmtValue(shown.value, unit)}</span>
         <div className="muted small">{hover != null ? shown.day : `latest complete day, ${last.day}`}{unit === "count" && points.length >= 7 && hover == null ? ` · ${fmtInt(total7)} in the last 7 days` : ""}</div>
       </div>
       <svg viewBox={`0 0 ${W} ${H}`} className="spark" role="img" aria-label={`${points.length} daily values, latest ${fmtValue(last.value, unit)}`}
