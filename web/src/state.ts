@@ -27,7 +27,23 @@ export const store = {
   loadSessions(): AuditSession[] {
     return safe(() => (JSON.parse(localStorage.getItem(SESSIONS_KEY) ?? "[]") as AuditSession[]).map((s) => ({ ...s, label: s.label ?? s.site?.domain ?? s.repo?.repo ?? "audit" })), []);
   },
-  saveSessions(s: AuditSession[]) { safe(() => localStorage.setItem(SESSIONS_KEY, JSON.stringify(s.slice(0, 20))), undefined); },
+  /** Returns an error string when the browser refused to persist (quota), so the UI can say so. */
+  saveSessions(s: AuditSession[]): string | null {
+    const trimmed = s.slice(0, 20);
+    try {
+      localStorage.setItem(SESSIONS_KEY, JSON.stringify(trimmed));
+      return null;
+    } catch {
+      // Almost always the quota: drop the oldest audits and the bulkiest tool payloads, then retry once.
+      try {
+        const lean = trimmed.slice(0, 5).map((a) => ({ ...a, transcript: a.transcript.map((m) => (m.role === "tool" ? { ...m, content: m.content.slice(0, 400), ui: m.ui ? { ...m.ui, rows: undefined } : m.ui } : m)) }));
+        localStorage.setItem(SESSIONS_KEY, JSON.stringify(lean));
+        return "This browser ran out of storage, so older audits and query results were trimmed to keep this one.";
+      } catch {
+        return "This browser is out of storage, so this audit is not being saved. It stays in this tab only.";
+      }
+    }
+  },
   currentId(): string | null { return safe(() => localStorage.getItem(CURRENT_KEY), null); },
   setCurrentId(id: string | null) { safe(() => (id ? localStorage.setItem(CURRENT_KEY, id) : localStorage.removeItem(CURRENT_KEY)), undefined); },
   accessCode(): string { return safe(() => localStorage.getItem(CODE_KEY) ?? "", ""); },

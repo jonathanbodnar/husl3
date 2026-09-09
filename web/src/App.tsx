@@ -12,7 +12,8 @@ export function App() {
   const [brainIndex, setBrainIndex] = useState<BrainIndex | null>(null);
   const [healthError, setHealthError] = useState<string | null>(null);
 
-  useEffect(() => { store.saveSessions(sessions); }, [sessions]);
+  const [storageWarning, setStorageWarning] = useState<string | null>(null);
+  useEffect(() => { setStorageWarning(store.saveSessions(sessions)); }, [sessions]);
   useEffect(() => { store.setCurrentId(currentId); }, [currentId]);
   useEffect(() => {
     api.health().then(setHealth).catch((e) => setHealthError(e instanceof Error ? e.message : String(e)));
@@ -67,6 +68,7 @@ export function App() {
         onStartRepo={startFromRepo}
         onResume={(id) => setCurrentId(id)}
         onDelete={remove}
+        storageWarning={storageWarning}
         onAccessCode={(code) => { store.setAccessCode(code); api.health().then(setHealth).catch(() => {}); api.brainIndex().then(setBrainIndex).catch(() => {}); }}
       />
     );

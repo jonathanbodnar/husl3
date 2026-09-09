@@ -1,11 +1,38 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { ChatRequest, Connections, CostEvent, HealthResponse, OAuthRelay, Todo } from "../../../shared/types";
+import type { ChatRequest, Connections, CostEvent, HealthResponse, OAuthRelay, Todo, TranscriptMessage } from "../../../shared/types";
 import { startOAuth } from "../oauth";
 import { api, type BrainIndex } from "../api";
 import { store, totalUsd, type AuditSession } from "../state";
 import { Chat, type LiveSegment } from "./Chat";
 import { ConnectDialog } from "./ConnectDialog";
 import { TodoPanel } from "./TodoPanel";
+
+/**
+ * The server round-trips the to-do list it was SENT, so anything the founder changed while the turn
+ * was streaming — most expensively a crafted prompt — is absent from the list that comes back.
+ * Assigning that list wholesale silently threw the work away. The server stays authoritative for
+ * membership, order and the model's own edits; locally-newer fields win.
+ */
+const localDate = () => { try { return new Date().toLocaleDateString("en-CA"); } catch { return new Date().toISOString().slice(0, 10); } };
+const localZone = () => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone || undefined; } catch { return undefined; } };
+
+function mergeTodos(fromServer: Todo[], local: Todo[]): Todo[] {
+  const byId = new Map(local.map((t) => [t.id, t]));
+  return fromServer.map((st) => {
+    const ct = byId.get(st.id);
+    if (!ct) return st;
+    const localNewer = Date.parse(ct.updatedAt || "") > Date.parse(st.updatedAt || "");
+    return {
+      ...st,
+      prompt: ct.prompt ?? st.prompt,
+      promptModel: ct.promptModel ?? st.promptModel,
+      promptStale: ct.prompt && !st.prompt ? ct.promptStale : st.promptStale,
+      status: localNewer ? ct.status : st.status,
+      title: localNewer && ct.title !== st.title ? ct.title : st.title,
+      updatedAt: localNewer ? ct.updatedAt : st.updatedAt,
+    };
+  });
+}
 
 export function Workspace(props: {
   session: AuditSession;
@@ -47,12 +74,15 @@ export function Workspace(props: {
     setConnectOpen(true);
   };
   const abortRef = useRef<AbortController | null>(null);
+  /** A connect message that fired while a turn was streaming; sent as soon as the turn ends. */
+  const queuedRef = useRef<string | null>(null);
   const started = useRef(false);
   const latest = useRef(s);
   latest.current = s;
 
   const say = useCallback((m: string) => { setToast(m); setTimeout(() => setToast(null), 2200); }, []);
-  const chatConfigured = !!props.health?.chat.configured;
+  // health===null means the check has not answered yet, which is not the same as "not configured".
+  const chatConfigured = props.health ? props.health.chat.configured : true;
   const promptsConfigured = !!props.health?.prompts.configured;
 
   /** Supabase Management API tokens expire; refresh shortly before, so a long audit never dies mid-query. */
@@ -71,7 +101,7 @@ export function Workspace(props: {
   }, [applySecrets]);
 
   const send = useCallback(async (text: string, kickoff = false) => {
-    if (streaming) return;
+    if (streaming) { if (!kickoff) queuedRef.current = text; return; }
     const cur = latest.current;
     const creds = await freshSecrets();
     const ctrl = new AbortController();
@@ -88,12 +118,17 @@ export function Workspace(props: {
       message: text,
       kickoff,
       clientTime: new Date().toISOString(),
+      clientDate: localDate(),
+      clientTimezone: localZone(),
     };
     const costs: CostEvent[] = [];
+    let settled = false;
+    let streamedText = "";
     try {
       await api.chat(req, (e) => {
         switch (e.type) {
           case "delta":
+            streamedText += e.text;
             setLive((prev) => {
               const arr = prev ? [...prev] : [];
               const last = arr[arr.length - 1];
@@ -109,7 +144,7 @@ export function Workspace(props: {
             setLive((prev) => (prev ?? []).map((seg) => (seg.kind === "tool" && seg.id === e.id ? { ...seg, ui: e.ui } : seg)));
             break;
           case "todos":
-            props.onUpdate({ todos: e.todos });
+            props.onUpdate((prev) => ({ ...prev, todos: mergeTodos(e.todos, prev.todos) }));
             break;
           case "usage":
             costs.push(e.cost);
@@ -118,15 +153,27 @@ export function Workspace(props: {
             setError(e.message);
             break;
           case "done":
-            props.onUpdate((prev) => ({ ...prev, transcript: [...prev.transcript, ...e.messages], todos: e.todos, costs: [...prev.costs, ...costs], updatedAt: new Date().toISOString() }));
+            settled = true;
+            props.onUpdate((prev) => ({ ...prev, transcript: [...prev.transcript, ...e.messages], todos: mergeTodos(e.todos, prev.todos), costs: [...prev.costs, ...costs], updatedAt: new Date().toISOString() }));
             break;
         }
       }, ctrl.signal);
     } catch (err) {
       if (!ctrl.signal.aborted) setError(err instanceof Error ? err.message : String(err));
-      if (costs.length) props.onUpdate((prev) => ({ ...prev, costs: [...prev.costs, ...costs] }));
     } finally {
+      // A stopped or failed turn was still asked and still billed: keep the question and whatever was
+      // answered, so the transcript matches what the founder saw and the cost has something to sit next to.
+      if (!settled) {
+        const salvage: TranscriptMessage[] = [];
+        if (!kickoff) salvage.push({ role: "user", content: text, at: new Date().toISOString() });
+        if (streamedText.trim()) salvage.push({ role: "assistant", content: streamedText, at: new Date().toISOString() });
+        if (salvage.length || costs.length) {
+          props.onUpdate((prev) => ({ ...prev, transcript: [...prev.transcript, ...salvage], costs: [...prev.costs, ...costs], updatedAt: new Date().toISOString() }));
+        }
+      }
       setStreaming(false); setLive(null); setPendingUser(null); abortRef.current = null;
+      const queued = queuedRef.current;
+      if (queued) { queuedRef.current = null; setTimeout(() => void send(queued), 30); }
     }
   }, [props, streaming, freshSecrets]);
 
@@ -165,7 +212,9 @@ export function Workspace(props: {
   const onRepo = (conn: Connections["github"] | null, digest: AuditSession["repo"], remember: boolean) => {
     const next: Connections = { ...secretsRef.current, github: conn ?? undefined };
     applySecrets(next, remember);
-    props.onUpdate({ repo: digest, links: { ...s.links, githubRepo: conn?.repo } });
+    // A repo-first audit has no site digest; keeping the repository digest is what stops the next
+    // request from being rejected as malformed when the founder only means to drop the credential.
+    props.onUpdate({ repo: digest ?? (s.site ? null : s.repo), links: { ...s.links, githubRepo: conn?.repo } });
     const repo = conn?.repo;
     if (repo && digest) setTimeout(() => void send(`I connected my repository (${repo}). What shipped recently that the data cannot show yet, and what should I instrument before we go on?`), 50);
   };
@@ -221,7 +270,7 @@ export function Workspace(props: {
         <TodoPanel todos={s.todos} brainIndex={props.brainIndex} crafting={crafting} promptsConfigured={promptsConfigured} onCraft={(ids) => void craft(ids)} onChange={(todos) => props.onUpdate({ todos })} onToast={say} />
       </div>
       {connectOpen && (
-        <ConnectDialog health={props.health} connections={secrets} schema={s.schema} repo={s.repo} remembered={store.isRemembered(s.id)} pending={pendingOAuth} onClose={() => { setConnectOpen(false); setPendingOAuth(null); }} onDb={onDb} onRepo={onRepo} />
+        <ConnectDialog health={props.health} onRemember={(r) => applySecrets(secretsRef.current, r)} connections={secrets} schema={s.schema} repo={s.repo} remembered={store.isRemembered(s.id)} pending={pendingOAuth} onClose={() => { setConnectOpen(false); setPendingOAuth(null); }} onDb={onDb} onRepo={onRepo} />
       )}
       {toast && <div className="toast">{toast}</div>}
     </div>

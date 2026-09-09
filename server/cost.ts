@@ -23,17 +23,41 @@ export const zeroUsage = (): Usage => ({ promptHit: 0, promptMiss: 0, completion
 
 function round6(n: number) { return Math.round(n * 1e6) / 1e6; }
 
-/** In-memory daily spend guard. Resets at UTC midnight; single-instance by design. */
+/**
+ * In-memory daily spend guard. Resets at UTC midnight; single-instance by design.
+ *
+ * Spend is only known after a turn finishes, so admission alone cannot hold the line: enough
+ * concurrent turns would all pass the check and then charge. Each admitted turn therefore reserves a
+ * pessimistic amount up front and settles to the real cost when it ends.
+ */
 export class DailyBudget {
   private day = "";
   private spent = 0;
-  constructor(private readonly limitUsd: number) {}
+  private reserved = 0;
+  constructor(private readonly limitUsd: number, private readonly reserveUsd = 0.25) {}
   private roll() {
     const today = new Date().toISOString().slice(0, 10);
-    if (today !== this.day) { this.day = today; this.spent = 0; }
+    if (today !== this.day) { this.day = today; this.spent = 0; this.reserved = 0; }
+  }
+  /** Reserve for one in-flight turn. Returns null when that would exceed the cap. */
+  reserve(): { settle: (actualUsd: number) => void } | null {
+    this.roll();
+    if (this.limitUsd > 0 && this.spent + this.reserved + this.reserveUsd > this.limitUsd) return null;
+    this.reserved += this.reserveUsd;
+    let settled = false;
+    return {
+      settle: (actualUsd: number) => {
+        if (settled) return;
+        settled = true;
+        this.roll();
+        this.reserved = Math.max(0, this.reserved - this.reserveUsd);
+        this.spent += Math.max(0, actualUsd);
+      },
+    };
   }
   add(usd: number) { this.roll(); this.spent += usd; }
   spentToday() { this.roll(); return this.spent; }
-  exhausted() { this.roll(); return this.limitUsd > 0 && this.spent >= this.limitUsd; }
+  committedToday() { this.roll(); return this.spent + this.reserved; }
+  exhausted() { this.roll(); return this.limitUsd > 0 && this.spent + this.reserved >= this.limitUsd; }
   get limit() { return this.limitUsd; }
 }

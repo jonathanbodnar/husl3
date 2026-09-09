@@ -154,6 +154,9 @@ export interface ChatRequest {
   /** First turn after the scan: the server supplies the opening instruction. */
   kickoff?: boolean;
   clientTime?: string;
+  /** The founder's own local date and zone, so the model never reasons in UTC on their behalf. */
+  clientDate?: string;
+  clientTimezone?: string;
 }
 
 export interface PromptsRequest {

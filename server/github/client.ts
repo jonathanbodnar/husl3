@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { GithubRepoItem, RepoCommit, RepoDigest } from "../../shared/types.js";
 import { env } from "../env.js";
 
@@ -21,7 +22,7 @@ async function gh<T = unknown>(path: string, token?: string, raw = false): Promi
     },
     signal: AbortSignal.timeout(20_000),
   });
-  if (res.status === 404) throw new Error(`GitHub: not found (${path.split("?")[0]}). Private repositories need a token with repo read access.`);
+  if (res.status === 404) throw new Error(`GitHub: not found (${path.split("?")[0]}).${token ? " Check the path and branch." : " If this is a private repository, connect GitHub so it can be read."}`);
   if (res.status === 401) throw new Error("GitHub: the token was rejected");
   if (res.status === 403 || res.status === 429) {
     const remaining = res.headers.get("x-ratelimit-remaining");
@@ -52,13 +53,21 @@ const STACK_DEPS: [RegExp, string][] = [
 interface TreeEntry { path: string; type: string; size?: number }
 const treeCache = new Map<string, { at: number; paths: string[]; truncated: boolean }>();
 
+/**
+ * The cache key includes the credential. A hit skips the GitHub call, so the cached entry is the only
+ * authorization check that runs; keyed by repo alone it would hand one visitor another visitor's
+ * private file listing. Anonymous callers share the "anon" key, which can only ever hold public data.
+ */
+const credentialKey = (token?: string) => (token ? "t:" + createHash("sha256").update(token).digest("hex").slice(0, 16) : "anon");
+
 async function tree(repo: string, branch: string, token?: string): Promise<{ paths: string[]; truncated: boolean }> {
-  const key = `${repo}@${branch}`;
+  const key = `${repo}@${branch}#${credentialKey(token)}`;
   const hit = treeCache.get(key);
   if (hit && Date.now() - hit.at < 10 * 60_000) return hit;
   const data = await gh<{ tree: TreeEntry[]; truncated: boolean }>(`/repos/${repo}/git/trees/${encodeURIComponent(branch)}?recursive=1`, token);
   const paths = (data.tree ?? []).filter((e) => e.type === "blob").map((e) => e.path);
   const entry = { at: Date.now(), paths, truncated: !!data.truncated };
+  if (treeCache.size > 200) for (const [k, v] of treeCache) if (Date.now() - v.at > 10 * 60_000) treeCache.delete(k);
   treeCache.set(key, entry);
   return entry;
 }

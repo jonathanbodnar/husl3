@@ -69,7 +69,22 @@ export const env = {
     scan: num("RATE_SCAN_PER_HOUR", 20),
     prompts: num("RATE_PROMPTS_PER_HOUR", 10),
   },
+  /** Ceiling across everyone. Per-IP limits rest on X-Forwarded-For, which only a proxy makes
+   *  trustworthy; these bound total abuse even if that assumption is wrong. 0 disables. */
+  rateGlobal: {
+    chat: num("RATE_GLOBAL_CHAT_PER_HOUR", 600),
+    scan: num("RATE_GLOBAL_SCAN_PER_HOUR", 300),
+    prompts: num("RATE_GLOBAL_PROMPTS_PER_HOUR", 120),
+  },
   maxToolRounds: num("MAX_TOOL_ROUNDS", 8),
+  /** Verify TLS certificates on founder Postgres connections. Off by default: managed providers
+   *  (Supabase pooler, Neon, RDS) present certificates this client has no root for. */
+  dbStrictTls: onoff("DB_STRICT_TLS", "off") === "on",
+  /** Allow a connection string that resolves to a private address (local development only). */
+  allowPrivateDbHosts: onoff("ALLOW_PRIVATE_DB_HOSTS", "off") === "on",
+  /** Number of proxies in front of this server. The client IP is taken that many hops from the right
+   *  of X-Forwarded-For, so a header a visitor sends themselves cannot become their rate-limit key. */
+  trustProxyHops: num("TRUST_PROXY_HOPS", 1),
   /** Public origin for OAuth callbacks; derived from the request when unset. */
   appOrigin: str("APP_ORIGIN"),
   github: {

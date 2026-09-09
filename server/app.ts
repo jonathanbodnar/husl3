@@ -19,8 +19,20 @@ export const app = new Hono<Bindings>();
 const budget = new DailyBudget(env.dailyBudgetUsd);
 
 // ── helpers ──────────────────────────────────────────────────────────────────
-const ipOf = (c: { req: { header: (k: string) => string | undefined }; env?: HttpBindings }) =>
-  (c.req.header("x-forwarded-for") ?? "").split(",")[0].trim() || c.env?.incoming?.socket?.remoteAddress || "unknown";
+/**
+ * X-Forwarded-For is attacker-controlled up to the first trusted proxy: a visitor can prepend any
+ * value. Each proxy APPENDS the peer it saw, so with N trusted proxies the real client is N from the
+ * right. Taking the leftmost entry (the old behavior) let one header defeat every per-IP limit.
+ */
+const ipOf = (c: { req: { header: (k: string) => string | undefined }; env?: HttpBindings }) => {
+  const socket = c.env?.incoming?.socket?.remoteAddress;
+  const hops = env.trustProxyHops;
+  if (hops > 0) {
+    const chain = (c.req.header("x-forwarded-for") ?? "").split(",").map((s) => s.trim()).filter(Boolean);
+    if (chain.length) return chain[Math.max(0, chain.length - hops)];
+  }
+  return socket || "unknown";
+};
 
 class RateLimiter {
   private hits = new Map<string, number[]>();
@@ -36,14 +48,26 @@ class RateLimiter {
   }
 }
 const limits = { chat: new RateLimiter(env.rate.chat), scan: new RateLimiter(env.rate.scan), prompts: new RateLimiter(env.rate.prompts) };
+const globalLimits = { chat: new RateLimiter(env.rateGlobal.chat), scan: new RateLimiter(env.rateGlobal.scan), prompts: new RateLimiter(env.rateGlobal.prompts) };
+/** Per-IP first, then the shared ceiling. Returns an error response, or null when the call may proceed. */
+function throttle(kind: "chat" | "scan" | "prompts", ip: string, what: string): Response | null {
+  if (!limits[kind].take(ip)) return errJson(`Too many ${what} from this address; try again later`, 429);
+  if (!globalLimits[kind].take("all")) return errJson(`This instance is busy right now; try again in a few minutes`, 429);
+  return null;
+}
 
 const errJson = (message: string, status: 400 | 401 | 403 | 413 | 429 | 500 | 502 | 503) => Response.json({ error: message }, { status });
 const msg = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
-async function body<T>(c: { req: { header: (k: string) => string | undefined; json: () => Promise<unknown> } }): Promise<T> {
+const MAX_BODY_BYTES = 6_000_000;
+
+async function body<T>(c: { req: { header: (k: string) => string | undefined; text: () => Promise<string>; json: () => Promise<unknown> } }): Promise<T> {
   const len = Number(c.req.header("content-length") ?? 0);
-  if (len > 6_000_000) throw Object.assign(new Error("Request too large"), { status: 413 });
-  try { return (await c.req.json()) as T; } catch { throw Object.assign(new Error("Body must be JSON"), { status: 400 }); }
+  if (len > MAX_BODY_BYTES) throw Object.assign(new Error("Request too large"), { status: 413 });
+  // Content-Length is a claim; measure what actually arrived.
+  const raw = await c.req.text();
+  if (Buffer.byteLength(raw, "utf8") > MAX_BODY_BYTES) throw Object.assign(new Error("Request too large"), { status: 413 });
+  try { return JSON.parse(raw) as T; } catch { throw Object.assign(new Error("Body must be JSON"), { status: 400 }); }
 }
 
 // ── middleware ───────────────────────────────────────────────────────────────
@@ -98,7 +122,8 @@ app.get("/api/brain/index", (c) => {
 });
 
 app.post("/api/site/scan", async (c) => {
-  if (!limits.scan.take(ipOf(c))) return errJson("Too many scans from this address; try again later", 429);
+  const throttled = throttle("scan", ipOf(c), "scans");
+  if (throttled) return throttled;
   const { url } = await body<{ url?: string }>(c);
   if (!url || typeof url !== "string") return errJson("url is required", 400);
   try { return c.json(await scanSite(url)); } catch (e) { return errJson(`Could not read that site: ${msg(e)}`, 502); }
@@ -107,21 +132,21 @@ app.post("/api/site/scan", async (c) => {
 app.route("/api/auth", auth);
 
 app.get("/api/github/repos", async (c) => {
-  if (!limits.scan.take(ipOf(c))) return errJson("Too many requests from this address; try again later", 429);
+  { const throttled = throttle("scan", ipOf(c), "requests"); if (throttled) return throttled; }
   const token = c.req.header("x-github-token");
   if (!token) return errJson("x-github-token header is required", 400);
   try { return c.json(await listRepos(token)); } catch (e) { return errJson(msg(e), 502); }
 });
 
 app.get("/api/supabase/projects", async (c) => {
-  if (!limits.scan.take(ipOf(c))) return errJson("Too many requests from this address; try again later", 429);
+  { const throttled = throttle("scan", ipOf(c), "requests"); if (throttled) return throttled; }
   const token = c.req.header("x-supabase-token");
   if (!token) return errJson("x-supabase-token header is required", 400);
   try { return c.json(await sbListProjects(token)); } catch (e) { return errJson(msg(e), 502); }
 });
 
 app.post("/api/db/introspect", async (c) => {
-  if (!limits.scan.take(ipOf(c))) return errJson("Too many requests from this address; try again later", 429);
+  { const throttled = throttle("scan", ipOf(c), "requests"); if (throttled) return throttled; }
   const b = await body<{ connectionString?: string; connection?: PostgresConnection }>(c);
   const conn: PostgresConnection = b.connection ?? { connectionString: b.connectionString };
   try {
@@ -132,18 +157,21 @@ app.post("/api/db/introspect", async (c) => {
 });
 
 app.post("/api/github/introspect", async (c) => {
-  if (!limits.scan.take(ipOf(c))) return errJson("Too many requests from this address; try again later", 429);
+  { const throttled = throttle("scan", ipOf(c), "requests"); if (throttled) return throttled; }
   const { repo, token } = await body<{ repo?: string; token?: string }>(c);
   try { return c.json(await introspectRepo(parseRepo(String(repo ?? "")), token?.trim() || undefined)); } catch (e) { return errJson(msg(e), 502); }
 });
 
 app.post("/api/chat", async (c) => {
-  if (!limits.chat.take(ipOf(c))) return errJson("Too many messages from this address this hour; try again later", 429);
-  if (budget.exhausted()) return errJson("Today's model budget is used up; the audit resumes tomorrow (UTC).", 503);
+  const throttled = throttle("chat", ipOf(c), "messages this hour");
+  if (throttled) return throttled;
+  const reservation = budget.reserve();
+  if (!reservation) return errJson("Today's model budget is used up; the audit resumes tomorrow (UTC).", 503);
   const req = await body<ChatRequest>(c);
-  if (!(req?.site?.pages || req?.repo?.repo) || !Array.isArray(req.transcript) || !Array.isArray(req.todos)) return errJson("Malformed chat request", 400);
-  if (!req.kickoff && (typeof req.message !== "string" || !req.message.trim())) return errJson("message is required", 400);
-  if (req.message && req.message.length > 8000) return errJson("Message too long", 400);
+  const bad = (m: string, s: 400 = 400) => { reservation.settle(0); return errJson(m, s); };
+  if (!(req?.site?.pages || req?.repo?.repo) || !Array.isArray(req.transcript) || !Array.isArray(req.todos)) return bad("Malformed chat request");
+  if (!req.kickoff && (typeof req.message !== "string" || !req.message.trim())) return bad("message is required");
+  if (req.message && req.message.length > 8000) return bad("Message too long");
   return streamSSE(c, async (stream) => {
     const ctrl = new AbortController();
     stream.onAbort(() => ctrl.abort());
@@ -155,11 +183,12 @@ app.post("/api/chat", async (c) => {
     const keepalive = setInterval(() => { chain = chain.then(() => stream.writeSSE({ event: "ping", data: "" })).catch(() => {}); }, 15_000);
     try {
       const { usd } = await runChatTurn(req, (e) => { void write(e); }, ctrl.signal);
-      budget.add(usd);
+      reservation.settle(usd);
     } catch (e) {
       void write({ type: "error", message: msg(e) });
       void write({ type: "done", messages: [], todos: req.todos });
     } finally {
+      reservation.settle(0);
       clearInterval(keepalive);
       await chain;
     }
@@ -167,15 +196,21 @@ app.post("/api/chat", async (c) => {
 });
 
 app.post("/api/prompts", async (c) => {
-  if (!limits.prompts.take(ipOf(c))) return errJson("Too many prompt requests from this address this hour", 429);
-  if (budget.exhausted()) return errJson("Today's model budget is used up; the audit resumes tomorrow (UTC).", 503);
+  const throttled = throttle("prompts", ipOf(c), "prompt requests this hour");
+  if (throttled) return throttled;
+  const reservation = budget.reserve();
+  if (!reservation) return errJson("Today's model budget is used up; the audit resumes tomorrow (UTC).", 503);
   const req = await body<PromptsRequest>(c);
-  if (!(req?.site || req?.repo) || !Array.isArray(req.todos)) return errJson("Malformed prompts request", 400);
+  if (!(req?.site || req?.repo) || !Array.isArray(req.todos)) { reservation.settle(0); return errJson("Malformed prompts request", 400); }
   try {
     const res = await craftPrompts(req, c.req.raw.signal);
-    budget.add(res.cost.usd);
+    reservation.settle(res.cost.usd);
     return c.json(res);
-  } catch (e) { return errJson(msg(e), 502); }
+  } catch (e) {
+    // A reply that failed to parse was still generated and still billed by the provider.
+    reservation.settle((e as { billedUsd?: number }).billedUsd ?? 0);
+    return errJson(msg(e), 502);
+  }
 });
 
 // ── static web app ───────────────────────────────────────────────────────────

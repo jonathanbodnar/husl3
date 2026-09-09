@@ -12,7 +12,12 @@ export function startOAuth<P extends Provider>(provider: P, opts: { before?: () 
     const startUrl = `/api/auth/${provider}/start`;
     // Open the window inside the click (popup blockers), then do any async preparation before navigating it.
     const w = window.open(opts.before ? "about:blank" : startUrl, "vd-oauth", "popup=yes,width=640,height=780");
-    if (!w) { window.location.assign(startUrl); return; }
+    if (!w) {
+      // Popup blocked: navigate this tab instead, but never skip the preparation step (revoking the
+      // old grant is what makes GitHub show the consent screen again).
+      void Promise.resolve(opts.before ? opts.before() : undefined).catch(() => {}).then(() => window.location.assign(startUrl));
+      return;
+    }
     if (opts.before) {
       try { w.document.write("<p style=\"font:15px system-ui;padding:2rem\">Preparing sign-in…</p>"); } catch { /* cross-origin later; ignore */ }
       opts.before().catch(() => {}).then(() => { try { w.location.href = startUrl; } catch { /* window closed */ } });

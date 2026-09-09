@@ -51,13 +51,16 @@ export async function runChatTurn(req: ChatRequest, emit: (e: ChatEvent) => void
   const tools = toolsFor({ db: hasDatabase(req.connections?.postgres), github: !!(req.connections?.github?.repo || req.repo?.repo) });
   let usage = zeroUsage();
   let usd = 0;
+  /** Text streamed in the round currently running, so a mid-stream failure does not erase what the user read. */
+  let partial = "";
   const account = (u: Usage) => { usage = addUsage(usage, u); const c = costEvent("chat", cfg.model, u, cfg.prices); usd += c.usd; emit({ type: "usage", cost: c }); };
 
   try {
     for (let round = 0; round <= env.maxToolRounds; round++) {
       if (signal.aborted) break;
       const lastRound = round === env.maxToolRounds;
-      const res = await streamChat(cfg, messages, lastRound ? undefined : tools, signal, { onDelta: (t) => emit({ type: "delta", text: t }) });
+      partial = "";
+      const res = await streamChat(cfg, messages, lastRound ? undefined : tools, signal, { onDelta: (t) => { partial += t; emit({ type: "delta", text: t }); } });
       account(res.usage);
       if (!res.toolCalls.length) {
         produced.push({ role: "assistant", content: res.content, at: now() });
@@ -77,6 +80,7 @@ export async function runChatTurn(req: ChatRequest, emit: (e: ChatEvent) => void
       }
     }
   } catch (err) {
+    if (partial.trim()) produced.push({ role: "assistant", content: partial, at: now() });
     if (!signal.aborted) {
       const message = err instanceof Error ? err.message : String(err);
       emit({ type: "error", message: friendly(message) });

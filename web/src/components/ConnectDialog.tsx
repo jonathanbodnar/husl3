@@ -14,6 +14,7 @@ export function ConnectDialog(props: {
   /** A sign-in already started by the click that opened this dialog (keeps the popup inside the user gesture). */
   pending?: { provider: "github" | "supabase"; promise: Promise<OAuthRelay> } | null;
   onClose: () => void;
+  onRemember: (remember: boolean) => void;
   onDb: (conn: Connections["postgres"] | null, schema: DbSchema | null, remember: boolean) => void;
   onRepo: (conn: Connections["github"] | null, digest: RepoDigest | null, remember: boolean) => void;
 }) {
@@ -94,7 +95,9 @@ export function ConnectDialog(props: {
   const resetGithub = async () => {
     const old = ghToken?.token;
     setGhBusy(true); setGhMsg(null); setRepos(null);
-    try { const r = await startOAuth("github", { before: async () => { if (old) await api.githubRevoke(old).catch(() => {}); } }); await afterGithubAuth(r.github); }
+    let revokeFailed: string | null = null;
+    try { const r = await startOAuth("github", { before: async () => { if (old) await api.githubRevoke(old).catch((e) => { revokeFailed = e instanceof Error ? e.message : String(e); }); } }); await afterGithubAuth(r.github);
+      if (revokeFailed) setGhMsg({ ok: false, text: `Signed in again, but the old authorization could not be revoked (${revokeFailed}), so GitHub may have skipped the organization step. Use the "grant access on GitHub" link.` }); }
     catch (e) { setGhMsg({ ok: false, text: e instanceof Error ? e.message : String(e) }); setGhBusy(false); }
   };
   const reauthSupabase = async () => {
@@ -232,7 +235,7 @@ export function ConnectDialog(props: {
 
           <section>
             <label className="rowb remember" style={{ cursor: "pointer" }}>
-              <input type="checkbox" checked={remember} onChange={(e) => setRemember(e.target.checked)} />
+              <input type="checkbox" checked={remember} onChange={(e) => { setRemember(e.target.checked); props.onRemember(e.target.checked); }} />
               <span>Remember these connections on this device (otherwise they are forgotten when this tab closes)</span>
             </label>
             <div className="note">Tokens travel from your browser to this server only inside the requests they are needed for and are never written to disk or logs there. There is no account and no server-side storage.</div>

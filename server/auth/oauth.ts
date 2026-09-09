@@ -23,7 +23,7 @@ export function originOf(c: { req: { header: (k: string) => string | undefined; 
 
 const cookieOpts = (origin: string) => ({ httpOnly: true, secure: origin.startsWith("https"), sameSite: "Lax" as const, path: "/api/auth", maxAge: 600 });
 
-function relay(origin: string, payload: OAuthRelay): Response {
+function relay(origin: string, payload: OAuthRelay, clearCookie?: string): Response {
   const json = JSON.stringify(payload).replace(/</g, "\\u003c");
   const html = `<!doctype html><meta charset="utf-8"><title>${payload.ok ? "Connected" : "Could not connect"}</title>
 <style>body{font:15px system-ui,sans-serif;color:#161c19;background:#f5f7f4;display:grid;place-items:center;height:100vh;margin:0}p{max-width:36ch;text-align:center;line-height:1.5}</style>
@@ -32,7 +32,10 @@ function relay(origin: string, payload: OAuthRelay): Response {
 try{if(window.opener&&!window.opener.closed){window.opener.postMessage(p,o);setTimeout(function(){window.close()},150);return;}}catch(e){}
 try{sessionStorage.setItem("vd.oauth."+p.provider,JSON.stringify(p));}catch(e){}
 location.replace(o+"/");})();</script>`;
-  return new Response(html, { status: 200, headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "referrer-policy": "no-referrer" } });
+  const headers = new Headers({ "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "referrer-policy": "no-referrer" });
+  // deleteCookie() writes to the Hono context, which a raw Response discards — clear it here instead.
+  if (clearCookie) headers.append("set-cookie", `${clearCookie}=; Max-Age=0; Path=/api/auth; HttpOnly; SameSite=Lax${origin.startsWith("https") ? "; Secure" : ""}`);
+  return new Response(html, { status: 200, headers });
 }
 const escapeHtml = (s: string) => s.replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[ch] ?? ch);
 const msg = (e: unknown) => (e instanceof Error ? e.message : String(e));
@@ -57,8 +60,8 @@ auth.get("/github/callback", async (c) => {
   deleteCookie(c, "vd_gh_state", { path: "/api/auth" });
   const state = c.req.query("state");
   const code = c.req.query("code");
-  if (c.req.query("error")) return relay(origin, { type: "vd:oauth", provider: "github", ok: false, error: c.req.query("error_description") ?? c.req.query("error")! });
-  if (!code || !state || !expected || state !== expected) return relay(origin, { type: "vd:oauth", provider: "github", ok: false, error: "The sign-in state did not match; try again." });
+  if (c.req.query("error")) return relay(origin, { type: "vd:oauth", provider: "github", ok: false, error: c.req.query("error_description") ?? c.req.query("error")! }, "vd_gh_state");
+  if (!code || !state || !expected || state !== expected) return relay(origin, { type: "vd:oauth", provider: "github", ok: false, error: "The sign-in state did not match; try again." }, "vd_gh_state");
   try {
     const res = await fetch(`${env.github.oauthBase.replace(/\/$/, "")}/login/oauth/access_token`, {
       method: "POST",
@@ -69,9 +72,9 @@ auth.get("/github/callback", async (c) => {
     const data = (await res.json()) as { access_token?: string; error?: string; error_description?: string };
     if (!res.ok || !data.access_token) throw new Error(data.error_description ?? data.error ?? `GitHub token exchange failed (HTTP ${res.status})`);
     const user = await getUser(data.access_token);
-    return relay(origin, { type: "vd:oauth", provider: "github", ok: true, github: { token: data.access_token, login: user.login } });
+    return relay(origin, { type: "vd:oauth", provider: "github", ok: true, github: { token: data.access_token, login: user.login } }, "vd_gh_state");
   } catch (e) {
-    return relay(origin, { type: "vd:oauth", provider: "github", ok: false, error: msg(e) });
+    return relay(origin, { type: "vd:oauth", provider: "github", ok: false, error: msg(e) }, "vd_gh_state");
   }
 });
 
@@ -142,13 +145,13 @@ auth.get("/supabase/callback", async (c) => {
   const [expected, verifier] = cookie.split(".");
   const state = c.req.query("state");
   const code = c.req.query("code");
-  if (c.req.query("error")) return relay(origin, { type: "vd:oauth", provider: "supabase", ok: false, error: c.req.query("error_description") ?? c.req.query("error")! });
-  if (!code || !state || !expected || !verifier || state !== expected) return relay(origin, { type: "vd:oauth", provider: "supabase", ok: false, error: "The sign-in state did not match; try again." });
+  if (c.req.query("error")) return relay(origin, { type: "vd:oauth", provider: "supabase", ok: false, error: c.req.query("error_description") ?? c.req.query("error")! }, "vd_sb_state");
+  if (!code || !state || !expected || !verifier || state !== expected) return relay(origin, { type: "vd:oauth", provider: "supabase", ok: false, error: "The sign-in state did not match; try again." }, "vd_sb_state");
   try {
     const tokens = await sbToken({ grant_type: "authorization_code", code, redirect_uri: `${origin}/api/auth/supabase/callback`, code_verifier: verifier });
-    return relay(origin, { type: "vd:oauth", provider: "supabase", ok: true, supabase: tokens });
+    return relay(origin, { type: "vd:oauth", provider: "supabase", ok: true, supabase: tokens }, "vd_sb_state");
   } catch (e) {
-    return relay(origin, { type: "vd:oauth", provider: "supabase", ok: false, error: msg(e) });
+    return relay(origin, { type: "vd:oauth", provider: "supabase", ok: false, error: msg(e) }, "vd_sb_state");
   }
 });
 

@@ -94,10 +94,12 @@ export function parsePage(html: string, url: string, status: number, headers: He
   });
   const bodyText = clean($("body").text() || "");
   const prices: string[] = [];
+  const seenPrices = new Set<string>();
   for (const m of bodyText.matchAll(PRICE_RE)) {
     const i = m.index ?? 0;
     const ctx = clean(bodyText.slice(Math.max(0, i - 50), Math.min(bodyText.length, i + m[0].length + 40)));
-    if (!prices.some((p) => p.includes(m[0]))) prices.push(ctx);
+    // Dedupe on the matched amount, not on the surrounding context (which made every later tier look seen).
+    if (!seenPrices.has(m[0])) { seenPrices.add(m[0]); prices.push(ctx); }
     if (prices.length >= 16) break;
   }
   const forms: SiteForm[] = [];
@@ -118,7 +120,10 @@ export function parsePage(html: string, url: string, status: number, headers: He
   $("a[href]").each((_, el) => {
     const href = $(el).attr("href")!;
     const abs = safeResolve(href, url);
-    if (abs.startsWith(origin) && !/\.(png|jpe?g|gif|svg|webp|pdf|zip|mp4|css|js|ico)(\?|$)/i.test(abs)) links.push(abs.replace(/#.*$/, ""));
+    // Compare origins, never string prefixes: "https://example.com.evil.com" starts with the origin.
+    let sameOrigin = false;
+    try { sameOrigin = new URL(abs).origin === origin; } catch { sameOrigin = false; }
+    if (sameOrigin && !/\.(png|jpe?g|gif|svg|webp|pdf|zip|mp4|css|js|ico)(\?|$)/i.test(abs)) links.push(abs.replace(/#.*$/, ""));
   });
   const stack = new Set<string>();
   const headerPairs: string[] = [];
@@ -157,7 +162,8 @@ export async function scanSite(input: string, log: (m: string) => void = () => {
       throw new Error(`Could not resolve ${new URL(normalizeUrl(input)).hostname}. Check the spelling, or start the audit from your repository instead.`);
     }
   }
-  if (home.status >= 400 || !home.text) throw new Error(`The site answered HTTP ${home.status} for ${url}`);
+  if (home.status >= 400) throw new Error(`${new URL(url).hostname} answered HTTP ${home.status}. If the page is behind a login or a bot check, start the audit from your repository instead.`);
+  if (!home.text.trim()) throw new Error(`${new URL(url).hostname} answered ${home.status} with an empty page, so there is nothing to read. If the site renders entirely in the browser, start from your repository instead.`);
   const finalUrl = home.finalUrl;
   const origin = new URL(finalUrl).origin;
   const parsedHome = parsePage(home.text, finalUrl, home.status, home.headers, true);

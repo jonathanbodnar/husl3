@@ -10,6 +10,7 @@ const REPO_PHASES = ["Reading the repository…", "Listing recent commits…", "
 export function Landing(props: {
   health: HealthResponse | null;
   healthError: string | null;
+  storageWarning?: string | null;
   sessions: AuditSession[];
   onStart: (url: string) => Promise<void>;
   onStartRepo: (repo: string, token: string | undefined, remember: boolean, login?: string, via?: "oauth" | "pat") => Promise<void>;
@@ -93,6 +94,7 @@ export function Landing(props: {
         </p>
 
         {props.healthError && <div className="banner error">The server is not reachable ({props.healthError}).</div>}
+        {props.storageWarning && <div className="banner">{props.storageWarning}</div>}
         {notConfigured && <div className="banner">The conversation model is not configured on this server yet (DEEPSEEK_API_KEY). The scan will work; the audit will not start.</div>}
 
         {needsCode ? (

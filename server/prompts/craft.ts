@@ -71,10 +71,17 @@ export async function craftPrompts(req: PromptsRequest, signal?: AbortSignal): P
   const user = `## Product\n${productContext(req)}\n\n## Audit conversation (latest turns)\n${conversationGist(req)}\n\n## Items to write prompts for\n${items}\n\nReturn {"prompts":[…]} with one entry per item, todo_id copied exactly.`;
   const messages: Message[] = [{ role: "system", content: SYSTEM }, { role: "user", content: user }];
   const res = await completeJson(cfg, messages, signal);
-  const parsed = extractJson(res.text) as { prompts?: { todo_id?: string; todoId?: string; prompt?: string }[] };
+  const billed = costEvent("prompts", cfg.model, res.usage, cfg.prices);
+  let parsed: { prompts?: { todo_id?: string; todoId?: string; prompt?: string }[] };
+  try {
+    parsed = extractJson(res.text) as { prompts?: { todo_id?: string; todoId?: string; prompt?: string }[] };
+  } catch (e) {
+    // The call happened and was billed; surface the cost so the budget still counts it.
+    throw Object.assign(e instanceof Error ? e : new Error(String(e)), { billedUsd: billed.usd });
+  }
   const prompts = (parsed.prompts ?? [])
     .map((p) => ({ todoId: String(p.todo_id ?? p.todoId ?? ""), prompt: String(p.prompt ?? "").trim() }))
     .filter((p) => p.todoId && p.prompt && chosen.some((t) => t.id === p.todoId));
-  if (!prompts.length) throw new Error("The prompt writer returned no usable prompts");
-  return { prompts, cost: costEvent("prompts", cfg.model, res.usage, cfg.prices), model: cfg.model, skipped };
+  if (!prompts.length) throw Object.assign(new Error("The prompt writer returned no usable prompts"), { billedUsd: billed.usd });
+  return { prompts, cost: billed, model: cfg.model, skipped };
 }
