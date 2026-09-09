@@ -110,9 +110,17 @@ export interface DbTable {
   columns: DbColumn[];
   timeColumns: string[];
 }
+export interface DbTelemetry {
+  /** True when at least one table looks like an event ledger (a name/type column plus a timestamp). */
+  hasEvents: boolean;
+  eventTables: string[];
+  /** Plain sentence for the founder and the model. */
+  summary: string;
+}
 export interface DbSchema {
   introspectedAt: string;
   tables: DbTable[];
+  telemetry?: DbTelemetry;
   /** Compact text used in the model context. */
   summary: string;
   authUsers?: number | null;
@@ -222,6 +230,8 @@ export interface Scoreboard {
   coreRequest?: string;
   /** Reporting timezone (IANA), used by the server to drop today from series. */
   timezone?: string;
+  /** The funnel stat that IS the path from signup to the goal; leaks are read between its steps. */
+  pathStatId?: string;
   stats: StatSpec[];
   results: Record<string, StatResult>;
   computedAt?: string;

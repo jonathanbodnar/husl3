@@ -9,7 +9,19 @@ import { brain } from "../brain/render.js";
  * actual. The current stage by the numbers is the earliest stage with a check that is not passed —
  * which is exactly how the brain says a stage is advanced: by numbers, not by opinion.
  */
-export function evaluateScoreboard(board: Scoreboard | null | undefined): ScoreboardEval {
+/** Plain stage name for founder-facing text ("Activation" rather than "s2"). */
+export function stageLabel(id: string | null | undefined): string {
+  if (!id) return "";
+  const s = ((brain.journey ?? []) as Array<{ id: string; name?: string }>).find((x) => x.id === id);
+  return s?.name ? s.name.split(":")[0].trim() : id;
+}
+
+export interface EvalOptions {
+  /** The connected database records nothing about what users do. */
+  noTelemetry?: boolean;
+}
+
+export function evaluateScoreboard(board: Scoreboard | null | undefined, opts: EvalOptions = {}): ScoreboardEval {
   const stages: any[] = brain.journey ?? [];
   const rows: ReadinessRow[] = [];
   const unbound: Record<string, string[]> = {};
@@ -76,7 +88,10 @@ export function evaluateScoreboard(board: Scoreboard | null | undefined): Scoreb
   // carries real numbers; it is reported as a gap instead, so "we never measured s0's registry" cannot
   // hold a founder with paying accounts at "before users".
   let stageByNumbers: StageId | null = null;
-  if (measuredCount > 0) {
+  // No event ledger is the brain's definition of stage zero ("build the instruments"): whatever the
+  // account and payment counts say, nothing between them can be measured, so nobody advances.
+  if (opts.noTelemetry) stageByNumbers = (stages[0]?.id as StageId) ?? "s0";
+  else if (measuredCount > 0) {
     const graded = (id: string) => rows.some((r) => r.stage === id && (r.status === "pass" || r.status === "fail" || r.status === "small_n"));
     for (let i = 0; i < stages.length; i++) {
       const st = stages[i];

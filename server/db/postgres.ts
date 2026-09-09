@@ -1,5 +1,5 @@
 import pg from "pg";
-import type { DbColumn, DbSchema, DbTable, PostgresConnection } from "../../shared/types.js";
+import type { DbColumn, DbSchema, DbTable, DbTelemetry, PostgresConnection } from "../../shared/types.js";
 import { env } from "../env.js";
 import { assertPublicHost } from "../net.js";
 import { prepareReadOnlySql, uniqueColumns } from "./sqlGate.js";
@@ -202,11 +202,35 @@ export async function introspect(conn: PostgresConnection): Promise<DbSchema> {
     } catch { authUsers = null; }
 
     const list = [...tables.values()].sort((a, b) => (b.rows ?? -1) - (a.rows ?? -1));
+    const telemetry = detectTelemetry(list);
+    notes.unshift(telemetry.summary);
     const statsMissing = stats.rows.length === 0 && list.length > 0;
     if (statsMissing) notes.push("Row estimates were unavailable (pg_stat_user_tables not readable with this connection), so table sizes are unknown.");
     notes.push("Only tables this connection may read are listed; a table you expect but do not see is one this role cannot see.");
-    return { introspectedAt: new Date().toISOString(), tables: list, summary: summarize(list, authUsers, notes), authUsers };
+    return { introspectedAt: new Date().toISOString(), tables: list, telemetry, summary: summarize(list, authUsers, notes), authUsers };
   });
+}
+
+const EVENTISH = /(^|_)(events?|analytics?|tracking|telemetry|activity|activities|actions?|pageviews?|page_views?|sessions?|usage|usage_logs?|audit_log|logs?|metrics?|clicks?|impressions?|interactions?)($|_)/i;
+const NAME_COL = /^(name|event|event_name|type|event_type|action|kind|category|path|url|route)$/i;
+
+/**
+ * Telemetry is the difference between an audit and a guess: without an event ledger nothing between
+ * signup and payment can be measured. So the schema is checked for one, and the answer leads every
+ * turn. A table counts when its name says events and it carries both a what column and a when column.
+ */
+export function detectTelemetry(tables: DbTable[]): DbTelemetry {
+  const eventTables = tables
+    .filter((t) => EVENTISH.test(t.name) && t.columns.some((c) => /timestamp|date/.test(c.type)) && t.columns.some((c) => NAME_COL.test(c.name)))
+    .map((t) => `${t.schema}.${t.name}`);
+  if (eventTables.length) {
+    return { hasEvents: true, eventTables, summary: `Telemetry: ${eventTables.join(", ")} record${eventTables.length === 1 ? "s" : ""} what users do, so activation, return and the path to the goal can be measured.` };
+  }
+  return {
+    hasEvents: false,
+    eventTables: [],
+    summary: "Telemetry: NONE. No table records what users do (no events, activity or tracking table with an event name and a timestamp). Accounts and payments can be counted; activation, return, and every step between signup and payment cannot be measured until an event ledger exists. That is the first thing to fix.",
+  };
 }
 
 function shortType(t: string): string {

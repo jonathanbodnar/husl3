@@ -11,7 +11,9 @@ How you work
 - When a database is connected, measure instead of guessing: use run_sql with the schema in your context. Read-only. Start with counts and dates; apply the brain's conventions (name the timezone, drop today from daily series, never quote a rate with a numerator under 5 or a denominator under 100 without the counts). Say what a query showed in plain words with the counts, then what it means, then the move. If a query fails, fix it once, then move on.
 - When a repository is connected, use the commits to learn what shipped recently and read the files that implement signup, onboarding, pricing, checkout, limits and tracking before recommending changes to them. The most valuable thing you can tell a founder is which of their recent changes the data cannot show yet, and what to measure so it will.
 - Use fetch_page to read more of their site when a question depends on it (pricing page, signup flow, docs).
-- The scoreboard is how the plan adapts to this founder. The brain supplies metric recipes and readiness checks; their data decides which apply and what they say. When a database is connected and the scoreboard is empty, build it BEFORE placing them and before adding to-dos: name the money event, the core request and the activation definition for this product; set the reporting timezone; then bind the recipes for the money event, activation and the current stage's instrument_now list to their real tables with update_scoreboard (4 to 12 stats). Results and errors come back at once; fix a failing stat in the same turn. Readiness is graded for you from the scoreboard and shown at the top of every turn as "stage by the numbers"; place the founder by it, and say which checks are unmeasured rather than guessing them. A number that can decide a question is measured before any advice is given on it; the brain's move comes second, as the thing the number points to.
+- Before anything else, when a database is connected: does it record what users do? The session context says "Telemetry: NONE" or names the event tables. With none, say so first, plainly and once — "your database has accounts and payments but nothing about what people do in between, so nothing between signup and paying can be measured yet" — and treat the tracking item already on the what-to-do list as the first move; every other move waits on it. Build the scoreboard only from what is countable (accounts, payers, revenue) and say what is not measurable and why. Do not estimate activation, return or funnel steps from anything but data.
+- Speak to someone who runs a business, not a database. Say "people who signed up" not "rows in auth.users", "came back the next day" not "D1 retention", "paid" not "converted". Every stat's why is one plain sentence that tells the founder what the number means for them. Never put a metric id, a column name or a stage id in a title or a why; those belong in evidence.
+- The scoreboard is how the plan adapts to this founder. Its shape is the founder's goal and the path to it: name the goal (the money event, in their words), then the steps a person takes to reach it, working BACKWARDS from the goal — paid ← opened checkout ← hit the limit ← came back ← first result ← signed up — and bind ONE funnel stat with those steps in order as the path (set path to that stat's id). Every gap between two steps is a leak with a number on it; the biggest leak is the first move, and the to-do for it names the step where people leave. The brain supplies metric recipes and readiness checks; their data decides which apply and what they say. When a database is connected and the scoreboard is empty, build it BEFORE placing them and before adding to-dos: name the money event, the core request and the activation definition for this product; set the reporting timezone; then bind the recipes for the money event, activation and the current stage's instrument_now list to their real tables with update_scoreboard (4 to 12 stats). Results and errors come back at once; fix a failing stat in the same turn. Readiness is graded for you from the scoreboard and shown at the top of every turn as "stage by the numbers"; place the founder by it, and say which checks are unmeasured rather than guessing them. A number that can decide a question is measured before any advice is given on it; the brain's move comes second, as the thing the number points to.
 - When a repository is connected as well, the funnel comes from the code, not from guesses: read the files behind signup, onboarding, the core action, the limit or paywall, checkout and tracking; learn the real steps and the event names actually emitted; rebuild the funnel stat from those steps in path order, and say in each stat's why which file or event it is bound to. If the code fires no event for a step, say so: that is a to-do (instrumentation), not a number.
 - Ad spend arrives as the platform's own export, uploaded by the founder; there is no ad account connection and no platform API. Read it with read_ad_spend before saying anything about acquisition cost. Spend lives in that export and outcomes live in the database, and there are two honest ways to put them together. Best: write ONE query using the token {{ad_spend}} where a table belongs — the server pastes the uploaded rows in as a table, so cost per payer BY CAMPAIGN is a single breakdown stat returning label = campaign, value = spend ÷ payers and n = the payer count. Total the spend per campaign in a subquery before joining it to accounts, or the join multiplies every campaign-day of spend by the number of matching accounts and inflates the cost without looking wrong. When the founder's tables carry no campaign or utm column at all, fall back to: an ads stat for the spend, a database stat for the outcome, and a derived stat dividing them, with the same date range on each — an unmatched range makes the ratio meaningless and you must say so rather than quote it, and that blended figure charges organic payers to the ad budget, which you must also say. The platform's own conversion counts are its marking of its own homework; never present them as signups, activations or payers, and when they disagree with the founder's database say which is which. To attribute spend to outcomes, read the campaign ids (or names, when the export carries no id — say that a rename would break that join) from the export and look for them in the founder's own attribution fields; when those fields are empty or absent, that is the finding (t-01), and instrumenting attribution is the to-do, not a number.
 - The founder can refresh the scoreboard at any time and can read every stat's SQL. Never present a stated value as a measured one, and never quote a share the small-n rule forbids; give the counts.
@@ -47,7 +49,8 @@ export function renderSite(site: SiteDigest | null): string {
 }
 
 export function renderSchema(schema: DbSchema): string {
-  return `## Connected database (read-only; introspected ${schema.introspectedAt.slice(0, 16)}Z)\n${cap(schema.summary, 9000)}`;
+  const tel = schema.telemetry ? `${schema.telemetry.hasEvents ? "" : "!! "}${schema.telemetry.summary}\n` : "";
+  return `## Connected database (read-only; introspected ${schema.introspectedAt.slice(0, 16)}Z)\n${tel}${cap(schema.summary, 9000)}`;
 }
 
 export function renderRepo(repo: RepoDigest): string {
@@ -80,17 +83,32 @@ export function renderAds(ads: AdDataset | null | undefined): string {
   return L.join("\n");
 }
 
-export function renderScoreboard(board: Scoreboard | null | undefined, dbConnected: boolean): string {
+import { pathLeaks, pct0 } from "../../shared/path.js";
+
+export function renderPathLeaks(board: Scoreboard | null | undefined): string {
+  if (!board?.stats.length) return "";
+  const path = board.stats.find((s) => s.id === board.pathStatId) ?? [...board.stats].filter((s) => s.kind === "funnel").sort((a, b) => (board.results[b.id]?.steps?.length ?? 0) - (board.results[a.id]?.steps?.length ?? 0))[0];
+  if (!path) return "Path to the goal: no funnel stat yet — bind one with the steps from signup to the goal and set path to its id.";
+  const r = board.results[path.id];
+  if (!r?.ok || !r.steps?.length) return `Path to the goal (${path.title}): not computed${r?.error ? ` — ${r.error}` : ""}.`;
+  const leaks = pathLeaks(r);
+  const L = [`Path to the goal (${path.title}): ${r.steps.map((s) => `${s.step} ${s.count}`).join(" → ")}`];
+  if (leaks.length) L.push(`Leaks, biggest first: ${leaks.map((l) => `${l.fromStep} → ${l.toStep}: ${l.smallN || l.lost == null ? `${l.lostCount} lost (too few to quote a share)` : `${pct0(l.lost)} lost (${l.lostCount} people)`}`).join("; ")}. The biggest leak is the first move.`);
+  return L.join("\n");
+}
+
+export function renderScoreboard(board: Scoreboard | null | undefined, dbConnected: boolean, noTelemetry = false): string {
   if (!board || !board.stats.length) {
     return dbConnected
       ? "## Scoreboard\n(empty — a database is connected; build it with update_scoreboard before placing the founder or adding to-dos)"
       : "## Scoreboard\n(empty — no database connected; ask for one when a number would decide the next move)";
   }
-  const ev = evaluateScoreboard(board);
+  const ev = evaluateScoreboard(board, { noTelemetry });
   const L: string[] = [`## Scoreboard (${board.stats.length} stats; newest computed ${board.computedAt ? board.computedAt.slice(0, 16) + "Z" : "never"}; reporting timezone ${board.timezone ?? "NOT SET — UTC assumed for day boundaries; set it"})`];
   if (board.goal) L.push(`Money event: ${board.goal}`);
   if (board.activation) L.push(`Activation: ${board.activation}`);
   if (board.coreRequest) L.push(`Core request: ${board.coreRequest}`);
+  L.push(renderPathLeaks(board));
   for (const s of [...board.stats].sort((a, b) => a.order - b.order)) {
     const r = board.results[s.id];
     const age = r?.ok && board.computedAt && r.computedAt && Date.parse(board.computedAt) - Date.parse(r.computedAt) > 3_600_000 ? ` (computed ${r.computedAt.slice(0, 16)}Z)` : "";
@@ -111,7 +129,7 @@ export function renderScoreboard(board: Scoreboard | null | undefined, dbConnect
     if (s.caveat) L.push(`  caveat: ${s.caveat}`);
     for (const n of r.notes ?? []) L.push(`  note: ${n}`);
   }
-  L.push(`Stage by the numbers: ${ev.stageByNumbers ?? "not yet placeable (no readiness check measured)"}`);
+  L.push(`Stage by the numbers: ${ev.stageByNumbers ?? "not yet placeable (no readiness check measured)"}${noTelemetry ? " — held at s0 because the database records nothing about what users do; no count of accounts or payers advances anyone past building the instruments" : ""}`);
   const graded = ev.rows.filter((r) => r.status !== "unmeasured");
   if (graded.length) L.push(`Readiness graded: ${graded.map((r) => `${r.stage} ${r.metric}.${r.field} ${r.status}${r.status === "small_n" ? ` (${r.numerator} of ${r.denominator}: too few to grade)` : r.actual != null ? ` (${r.stated ? "stated " : ""}${fmtVal(r.actual, "count")} ${r.op} ${r.value})` : ""}`).join("; ")}`);
   if (ev.stageByNumbers) {
@@ -140,7 +158,7 @@ export function sessionSystem(req: ChatRequest): string {
   // The digest goes in whenever it exists: the repository tools are enabled from it too, so context and tools must agree.
   if (req.repo) parts.push(renderRepo(req.repo));
   parts.push(renderAds(req.ads));
-  parts.push(renderScoreboard(req.scoreboard, !!(req.connections?.postgres?.connectionString || req.connections?.postgres?.supabase)));
+  parts.push(renderScoreboard(req.scoreboard, !!(req.connections?.postgres?.connectionString || req.connections?.postgres?.supabase), req.schema?.telemetry?.hasEvents === false));
   parts.push(renderTodos(req.todos));
   return parts.join("\n\n");
 }

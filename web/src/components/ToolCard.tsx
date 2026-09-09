@@ -3,7 +3,7 @@ import type { ToolUi } from "../../../shared/types";
 
 const LABELS: Record<string, string> = {
   update_todos: "What-to-do list",
-  update_scoreboard: "Scoreboard",
+  update_scoreboard: "Your numbers",
   run_sql: "Query",
   db_describe_table: "Table",
   fetch_page: "Read page",

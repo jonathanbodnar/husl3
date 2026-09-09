@@ -39,6 +39,22 @@ export async function runChatTurn(req: ChatRequest, emit: (e: ChatEvent) => void
   if (!userText) throw new Error("Empty message");
 
   let todos: Todo[] = Array.isArray(req.todos) ? req.todos : [];
+  // A connected database with no event table means nothing between signup and payment can be measured.
+  // The founder's first instruction is to track, and it is placed on the list here rather than left to
+  // the model, so it cannot be forgotten, buried, or phrased as optional.
+  const dbConnected = !!(req.connections?.postgres?.connectionString || req.connections?.postgres?.supabase);
+  // Keyed by a fixed id so it is added once and stays first; a model-written tracking item does not
+  // stand in for it, because those tend to be about one event rather than the ledger.
+  if (dbConnected && req.schema?.telemetry && !req.schema.telemetry.hasEvents && !todos.some((t) => t.id === "td-track")) {
+    const stamp = new Date().toISOString();
+    todos = [{
+      id: "td-track",
+      title: "Start tracking what users do: an event for every page view, click and action, with a stable anonymous id",
+      why: "Your database has accounts and payments but no record of what anyone does in between, so activation, return and every step of the path to paying cannot be measured. Until this exists the audit can count users and payers and nothing else. Everything else on this list waits on it.",
+      stage: "s0", principle: "p-track", evidence: ["e-06", "t-01", "law-telemetry-01"], status: "todo", order: 0, createdAt: stamp, updatedAt: stamp,
+    }, ...todos.map((t) => ({ ...t, order: t.order + 1 }))];
+    emit({ type: "todos", todos });
+  }
   let scoreboard: Scoreboard = req.scoreboard && Array.isArray(req.scoreboard.stats) ? { ...req.scoreboard, results: req.scoreboard.results ?? {} } : { stats: [], results: {} };
   let scoreboardChanged = false;
   const now = () => new Date().toISOString();

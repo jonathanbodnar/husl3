@@ -2,7 +2,7 @@ import { randomBytes } from "node:crypto";
 import type { AdDataset, ChatRequest, Scoreboard, ScoreboardEval, StageId, StatKind, StatSpec, StatUnit, Todo, ToolUi } from "../../shared/types.js";
 import { spliceAdSpend } from "../ads/spendSql.js";
 import { runAdStat } from "../stats/ads.js";
-import { evaluateScoreboard } from "../stats/readiness.js";
+import { evaluateScoreboard, stageLabel } from "../stats/readiness.js";
 import { runScoreboard } from "../stats/run.js";
 import { brainIndex, stageIds } from "../brain/render.js";
 import { hasDatabase, runReadOnlyQuery } from "../db/postgres.js";
@@ -145,6 +145,7 @@ async function applyScoreboardOps(args: Record<string, unknown>, ctx: ToolContex
   const warnings: string[] = [];
   const now = new Date().toISOString();
   for (const k of ["goal", "activation", "coreRequest"] as const) if (typeof args[k] === "string" && (args[k] as string).trim()) board[k] = (args[k] as string).trim().slice(0, 300);
+  if (typeof args.path === "string" && args.path.trim()) { const id = args.path.trim(); if (board.stats.some((s) => s.id === id && s.kind === "funnel")) board.pathStatId = id; else warnings.push(`path ignored: ${id} is not a funnel stat on this board`); }
   let timezoneChanged = false;
   if (typeof args.timezone === "string" && args.timezone.trim()) {
     try { new Intl.DateTimeFormat("en-CA", { timeZone: args.timezone.trim() }); if (board.timezone !== args.timezone.trim()) timezoneChanged = !!board.timezone; board.timezone = args.timezone.trim(); }
@@ -224,6 +225,8 @@ async function applyScoreboardOps(args: Record<string, unknown>, ctx: ToolContex
       for (const s of [...board.stats].sort((a, b) => a.order - b.order)) if (!ids.includes(s.id)) s.order = order++;
     } else warnings.push(`unknown op ${kind}`);
   }
+  if (typeof args.path === "string" && !board.pathStatId) { const id = args.path.trim(); if (board.stats.some((s) => s.id === id && s.kind === "funnel")) board.pathStatId = id; }
+  if (!board.pathStatId) { const f = board.stats.filter((s) => s.kind === "funnel"); if (f.length === 1) board.pathStatId = f[0].id; }
   // Run what changed (and anything never run), on one connection. A timezone change moves every day
   // boundary, so everything is re-run then.
   const dirty = new Set(timezoneChanged ? board.stats.map((s) => s.id) : board.stats.filter((s) => touched.includes(s.id) || !board.results[s.id]).map((s) => s.id));
@@ -243,7 +246,7 @@ async function applyScoreboardOps(args: Record<string, unknown>, ctx: ToolContex
     // The board's time is the newest stat's time; older stats carry their own.
     board.computedAt = Object.values(board.results).reduce((m, r) => (r.computedAt > m ? r.computedAt : m), "") || undefined;
   }
-  const evaluation = evaluateScoreboard(board);
+  const evaluation = evaluateScoreboard(board, { noTelemetry: ctx.req.schema?.telemetry?.hasEvents === false });
   const failed = board.stats.filter((s) => board.results[s.id] && !board.results[s.id].ok);
   {
     const seen = new Map<string, StatSpec[]>();
@@ -262,7 +265,7 @@ async function applyScoreboardOps(args: Record<string, unknown>, ctx: ToolContex
   return {
     content: modelJson(forModel),
     // Partial success is success with a count; only a board where nothing computed reads as an error.
-    ui: { name: "update_scoreboard", ok: okCount > 0 || board.stats.length === 0, summary: `Scoreboard: ${forModel.result}; ${okCount}/${board.stats.length} stats computed${failed.length ? `, ${failed.length} failed` : ""}${evaluation.stageByNumbers ? `; stage by the numbers: ${evaluation.stageByNumbers}` : ""}` },
+    ui: { name: "update_scoreboard", ok: okCount > 0 || board.stats.length === 0, summary: `${forModel.result}; ${okCount} of ${board.stats.length} computed${failed.length ? `, ${failed.length} failed` : ""}${evaluation.stageByNumbers ? `; by the numbers you are at: ${stageLabel(evaluation.stageByNumbers)}` : ""}` },
     scoreboard: board,
     eval: evaluation,
   };

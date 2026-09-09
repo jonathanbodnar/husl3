@@ -237,7 +237,7 @@ export function Workspace(props: {
     setRefreshing(true);
     try {
       const creds = await freshSecrets();
-      const r = await api.runStats(creds.postgres, cur.scoreboard, undefined, cur.ads ?? null);
+      const r = await api.runStats(creds.postgres, cur.scoreboard, undefined, cur.ads ?? null, cur.schema?.telemetry?.hasEvents === false);
       props.onUpdate((prev) => {
         if (!prev.scoreboard) return prev;
         // Merge by id onto whatever specs exist now: a stat added meanwhile keeps its result, a removed one gains none.
@@ -247,7 +247,7 @@ export function Workspace(props: {
         return { ...prev, scoreboard: { ...prev.scoreboard, results, computedAt: newest || prev.scoreboard.computedAt }, scoreboardEval: r.eval };
       });
       const failed = Object.values(r.results).filter((x) => !x.ok).length;
-      say(failed ? `Scoreboard refreshed; ${failed} stat${failed === 1 ? "" : "s"} failed` : "Scoreboard refreshed");
+      say(failed ? `Your numbers refreshed; ${failed} stat${failed === 1 ? "" : "s"} failed` : "Your numbers refreshed");
     } catch (e) { say(e instanceof Error ? e.message : String(e)); } finally { setRefreshing(false); }
   }, [props, say, freshSecrets]);
 
@@ -363,11 +363,11 @@ export function Workspace(props: {
         <aside className="panel">
           <div className="tabs" role="tablist">
             <button role="tab" aria-selected={tab === "todo"} className={tab === "todo" ? "on" : ""} onClick={() => setTab("todo")}>What to do <span className="count">{s.todos.filter((t) => t.status !== "dismissed").length}</span></button>
-            <button role="tab" aria-selected={tab === "scoreboard"} className={tab === "scoreboard" ? "on" : ""} onClick={() => setTab("scoreboard")}>Scoreboard {s.scoreboard?.stats.length ? <span className="count">{s.scoreboard.stats.length}</span> : null}</button>
+            <button role="tab" aria-selected={tab === "scoreboard"} className={tab === "scoreboard" ? "on" : ""} onClick={() => setTab("scoreboard")}>Your numbers {s.scoreboard?.stats.length ? <span className="count">{s.scoreboard.stats.length}</span> : null}</button>
           </div>
           {tab === "todo"
             ? <TodoPanel todos={s.todos} brainIndex={props.brainIndex} crafting={crafting} promptsConfigured={promptsConfigured} onCraft={(ids) => void craft(ids)} onChange={(todos) => props.onUpdate({ todos })} onToast={say} embedded />
-            : <div className="plist"><ScoreboardPanel board={s.scoreboard ?? null} evaluation={s.scoreboardEval ?? null} brainIndex={props.brainIndex} dbConnected={!!secrets.postgres} refreshing={refreshing} onRefresh={() => void refreshScoreboard()} /></div>}
+            : <div className="plist"><ScoreboardPanel board={s.scoreboard ?? null} evaluation={s.scoreboardEval ?? null} brainIndex={props.brainIndex} telemetry={s.schema?.telemetry ?? null} dbConnected={!!secrets.postgres} refreshing={refreshing} onRefresh={() => void refreshScoreboard()} onAsk={(t) => { setTab("todo"); void send(t); }} /></div>}
         </aside>
       </div>
       {connectOpen && (
