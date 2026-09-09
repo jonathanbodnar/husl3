@@ -61,8 +61,8 @@ app.get("/api/health", (c) => {
   const chat = env.chat(); const prompts = env.prompts();
   const res: HealthResponse = {
     ok: true, brainVersion, brainTokensApprox,
-    chat: { configured: !!chat.apiKey, model: chat.model },
-    prompts: { configured: !!prompts.apiKey, model: prompts.model },
+    chat: { configured: !!chat.apiKey, model: chat.model, thinking: chat.thinking },
+    prompts: { configured: !!prompts.apiKey, model: prompts.model, thinking: prompts.thinking, thinkingBudget: prompts.thinkingBudget },
     accessCodeRequired: !!env.accessCode,
     budget: { dailyUsd: env.dailyBudgetUsd, spentTodayUsd: Math.round(budget.spentToday() * 10_000) / 10_000 },
   };

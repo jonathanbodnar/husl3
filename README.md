@@ -15,6 +15,8 @@ The evidence is the **Vibe Distribution brain** (`server/brain/brain.json`): 20 
 
 Both endpoints are OpenAI-compatible, so any provider works by changing `*_BASE_URL`, `*_MODEL` and the key (OpenRouter ids: `deepseek/deepseek-v4-pro`, `qwen/qwen3.8-max-0902`; Kimi K3 or a Claude proxy fit the same slot). Prices are configurable and only feed the cost meter. Design target: **≈15–20¢ per audit** for the pair.
 
+Measured live (Sep 2026, one sample site): a DeepSeek opening turn with a tool round costs about 7¢ when the brain prefix is cold and well under 1¢ once cached; one Qwen prompt costs 0.9¢ with thinking off, 1.2¢ with `PROMPT_THINKING_BUDGET=3000` (31 s), and 6.6¢ uncapped (243 s). Keep the budget set.
+
 ## Run
 
 ```bash

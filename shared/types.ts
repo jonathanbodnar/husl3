@@ -166,8 +166,8 @@ export interface HealthResponse {
   ok: boolean;
   brainVersion: string;
   brainTokensApprox: number;
-  chat: { configured: boolean; model: string };
-  prompts: { configured: boolean; model: string };
+  chat: { configured: boolean; model: string; thinking: "on" | "off" };
+  prompts: { configured: boolean; model: string; thinking: "on" | "off"; thinkingBudget: number };
   accessCodeRequired: boolean;
   budget: { dailyUsd: number; spentTodayUsd: number };
 }
