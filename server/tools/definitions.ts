@@ -53,7 +53,7 @@ export function toolsFor(opts: { db: boolean; github: boolean }): Tool[] {
         name: "update_scoreboard",
         description:
           `Build or change the founder's scoreboard: the brain's metric recipes bound to THEIR tables, run by the server, graded against the journey's readiness checks, and shown in a side panel. Set goal / activation / coreRequest and the IANA timezone the first time (the timezone is required: today is dropped and days are bucketed on it). Each stat has a kind with a strict SQL contract:
-number: one row with a numeric column "value" (optional "n").
+number: one row with a numeric column "value" (optional "n"). Unit percent always means a 0–1 fraction (0.083, not 8.3), for every kind.
 rate: one row with integer columns "numerator" and "denominator" (the server computes the share and applies the small-n rule).
 series: rows "day" (date) and "value", ascending, one per calendar day in the reporting timezone (the server drops today).
 funnel: rows "step" (text) and "count", one per step in path order, first step = the widest.

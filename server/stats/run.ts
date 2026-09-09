@@ -81,6 +81,7 @@ export function normalize(spec: StatSpec, rows: Record<string, unknown>[], colum
       for (const p of points) { const last = dedup[dedup.length - 1]; if (last && last.day === p.day) { last.value += p.value; if (!notes.includes("Several rows shared a day and were summed.")) notes.push("Several rows shared a day and were summed."); } else dedup.push({ ...p }); }
       const kept = dedup.slice(-MAX_SERIES_POINTS);
       if (dedup.length > MAX_SERIES_POINTS) notes.push(`Only the latest ${MAX_SERIES_POINTS} of ${dedup.length} days are kept.`);
+      if (spec.sql && !/time\s*zone|timezone/i.test(spec.sql)) notes.push(`The SQL names no timezone, so days are bucketed in the database session zone (usually UTC)${timezone ? `, not ${timezone}` : ""}; add AT TIME ZONE to the day expression.`);
       const span = (Date.parse(kept[kept.length - 1].day) - Date.parse(kept[0].day)) / 86_400_000 + 1;
       if (span > kept.length) notes.push(`${Math.round(span - kept.length)} day(s) in the range have no row (quiet days are missing, not zero); totals over "the last 7 days" use calendar days.`);
       return { ...base, points: kept, droppedToday, notes: notes.length ? notes : undefined };

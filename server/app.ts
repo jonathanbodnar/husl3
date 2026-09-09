@@ -156,13 +156,15 @@ app.get("/api/supabase/projects", async (c) => {
 
 app.post("/api/stats/run", async (c) => {
   { const throttled = throttle("scan", ipOf(c), "requests"); if (throttled) return throttled; }
-  const b = await body<{ connection?: PostgresConnection; scoreboard?: { stats?: unknown[]; timezone?: string }; only?: string[] }>(c);
+  const b = await body<{ connection?: PostgresConnection; scoreboard?: { stats?: unknown[]; timezone?: string; results?: Record<string, unknown> }; only?: string[] }>(c);
   if (!b?.scoreboard || !Array.isArray(b.scoreboard.stats)) return errJson("scoreboard.stats is required", 400);
-  const board = { ...(b.scoreboard as import("../shared/types.js").Scoreboard), results: {} as Record<string, import("../shared/types.js").StatResult> };
+  // Existing results are kept so a partial run (only=[…]) is graded on the whole board, not on the subset.
+  const prior = (b.scoreboard.results && typeof b.scoreboard.results === "object" ? b.scoreboard.results : {}) as Record<string, import("../shared/types.js").StatResult>;
+  const board = { ...(b.scoreboard as import("../shared/types.js").Scoreboard), results: { ...prior } };
   if (board.stats.length > 12) return errJson("At most 12 stats", 400);
   try {
     const results = await runScoreboard(b.connection, board, Array.isArray(b.only) ? b.only.map(String) : undefined);
-    const merged = { ...board, results, computedAt: new Date().toISOString() };
+    const merged = { ...board, results: { ...board.results, ...results }, computedAt: new Date().toISOString() };
     return c.json({ results, computedAt: merged.computedAt, eval: evaluateScoreboard(merged) });
   } catch (e) { return targetError(`Could not run the scoreboard: ${redact(msg(e))}`); }
 });

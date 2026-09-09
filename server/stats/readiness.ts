@@ -49,8 +49,10 @@ export function evaluateScoreboard(board: Scoreboard | null | undefined): Scoreb
       if (spec) {
         const res = results[spec.id];
         row.statId = spec.id;
-        // A series is graded on its latest complete period.
-        const actual = res?.ok ? (typeof res.value === "number" ? res.value : res.points?.length ? res.points[res.points.length - 1].value : undefined) : undefined;
+        // A series is graded on its latest complete period — but only an additive one (count / usd): a percent
+        // series carries no counts, so the small-n rule could not be applied and it must not grade a check.
+        const seriesOk = spec.kind !== "series" || spec.unit === "count" || spec.unit === "usd";
+        const actual = res?.ok && seriesOk ? (typeof res.value === "number" ? res.value : res.points?.length ? res.points[res.points.length - 1].value : undefined) : undefined;
         if (typeof actual === "number" && Number.isFinite(target)) {
           row.actual = actual;
           if (res!.numerator != null) { row.numerator = res!.numerator; row.denominator = res!.denominator; }

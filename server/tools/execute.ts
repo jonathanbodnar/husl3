@@ -124,7 +124,13 @@ async function applyScoreboardOps(args: Record<string, unknown>, ctx: ToolContex
     try { new Intl.DateTimeFormat("en-CA", { timeZone: args.timezone.trim() }); if (board.timezone !== args.timezone.trim()) timezoneChanged = !!board.timezone; board.timezone = args.timezone.trim(); }
     catch { warnings.push(`unknown timezone ignored: ${args.timezone}`); }
   }
-  if (!board.timezone) warnings.push("No reporting timezone is set: today is being dropped on UTC boundaries and day buckets may not match the founder's day. Set timezone (IANA) now.");
+  if (!board.timezone) {
+    const fromClient = ctx.req.clientTimezone?.trim();
+    let valid = false;
+    if (fromClient) { try { new Intl.DateTimeFormat("en-CA", { timeZone: fromClient }); valid = true; } catch { valid = false; } }
+    if (valid) { board.timezone = fromClient; warnings.push(`timezone was not set; defaulted to the founder's browser zone ${fromClient}. Confirm it is the reporting zone and use it in every SQL day boundary.`); }
+    else warnings.push("No reporting timezone is set: today is being dropped on UTC boundaries and day buckets may not match the founder's day. Set timezone (IANA) now.");
+  }
   const touched: string[] = [];
   const validMetric = (m: unknown) => (typeof m === "string" && brainIndex.get(m)?.kind === "metric" ? m : undefined);
   let added = 0, changed = 0, removed = 0;
@@ -195,6 +201,7 @@ async function applyScoreboardOps(args: Record<string, unknown>, ctx: ToolContex
   {
     const seen = new Map<string, StatSpec[]>();
     for (const s of board.stats) if (s.metricId && s.field) { const k = `${s.metricId}.${s.field}`; seen.set(k, [...(seen.get(k) ?? []), s]); }
+    for (const s of board.stats) if (s.kind === "series" && s.unit === "percent" && s.metricId && s.field) warnings.push(`${s.id} is a percent series bound to ${s.metricId}.${s.field}: a series carries no counts, so it cannot grade readiness; bind a rate stat (numerator/denominator) for the check`);
     for (const [k, list] of seen) if (list.length > 1) warnings.push(`${k} is bound by ${list.length} stats (${list.map((s) => `${s.id} ${s.kind}`).join(", ")}); the scalar one grades readiness, a series is graded on its latest period — keep one per field or bind the other to a different field`);
   }
   const forModel = {
