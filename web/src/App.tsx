@@ -37,7 +37,7 @@ export function App() {
   }, []);
 
   /** Repo-first entry: read the repository, then scan the live site it names, if any. */
-  const startFromRepo = useCallback(async (repo: string, token: string | undefined, remember: boolean) => {
+  const startFromRepo = useCallback(async (repo: string, token: string | undefined, remember: boolean, login?: string, via: "oauth" | "pat" = "pat") => {
     const digest = await api.introspectRepo(repo, token);
     let site = null as Awaited<ReturnType<typeof api.scan>> | null;
     for (const candidate of digest.siteCandidates.slice(0, 3)) {
@@ -46,7 +46,7 @@ export function App() {
     const s = newSession(site, site?.domain ?? digest.repo);
     s.repo = digest;
     s.links = { postgres: false, githubRepo: digest.repo };
-    store.setSecrets(s.id, { github: { repo: digest.repo, token } }, remember);
+    store.setSecrets(s.id, { github: { repo: digest.repo, token, login, via } }, remember);
     setSessions((prev) => [s, ...prev]);
     setCurrentId(s.id);
   }, []);

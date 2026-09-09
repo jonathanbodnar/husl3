@@ -55,8 +55,16 @@ export interface SiteDigest {
   notes: string[];
 }
 
-export interface PostgresConnection { connectionString: string }
-export interface GithubConnection { repo: string; token?: string }
+/** Supabase link obtained through OAuth: the Management API token runs read-only SQL on one project. */
+export interface SupabaseLink { accessToken: string; refreshToken?: string; expiresAt?: number; projectRef: string; projectName?: string; orgName?: string }
+export interface PostgresConnection { connectionString?: string; supabase?: SupabaseLink }
+export interface GithubConnection { repo: string; token?: string; login?: string; via?: "oauth" | "pat" }
+export interface GithubRepoItem { fullName: string; private: boolean; pushedAt?: string; description?: string; language?: string }
+export interface SupabaseProjectItem { ref: string; name: string; region?: string; status?: string; orgName?: string }
+export type OAuthRelay =
+  | { type: "vd:oauth"; provider: "github"; ok: true; github: { token: string; login: string } }
+  | { type: "vd:oauth"; provider: "supabase"; ok: true; supabase: { accessToken: string; refreshToken?: string; expiresAt?: number } }
+  | { type: "vd:oauth"; provider: "github" | "supabase"; ok: false; error: string };
 export interface Connections { postgres?: PostgresConnection; github?: GithubConnection }
 
 export interface DbColumn { name: string; type: string; nullable: boolean }
@@ -172,5 +180,7 @@ export interface HealthResponse {
   chat: { configured: boolean; model: string; thinking: "on" | "off" };
   prompts: { configured: boolean; model: string; thinking: "on" | "off"; thinkingBudget: number };
   accessCodeRequired: boolean;
+  /** Which OAuth brokers this server has client credentials for. */
+  oauth: { github: boolean; supabase: boolean };
   budget: { dailyUsd: number; spentTodayUsd: number };
 }

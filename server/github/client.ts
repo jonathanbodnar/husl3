@@ -1,6 +1,7 @@
-import type { RepoCommit, RepoDigest } from "../../shared/types.js";
+import type { GithubRepoItem, RepoCommit, RepoDigest } from "../../shared/types.js";
+import { env } from "../env.js";
 
-const API = "https://api.github.com";
+const API = env.github.apiBase.replace(/\/$/, "");
 const UA = "VibeDistributionAudit/0.1 (+https://github.com/jonathanbodnar/husl3)";
 
 export function parseRepo(input: string): string {
@@ -155,6 +156,22 @@ function isoWeek(d: Date): string {
   const y0 = new Date(Date.UTC(t.getUTCFullYear(), 0, 1));
   const w = Math.ceil(((t.getTime() - y0.getTime()) / 86_400_000 + 1) / 7);
   return `${t.getUTCFullYear()}-W${String(w).padStart(2, "0")}`;
+}
+
+export async function getUser(token: string): Promise<{ login: string }> {
+  const u = await gh<{ login: string }>("/user", token);
+  return { login: u.login };
+}
+
+/** Repositories the token can see, most recently pushed first (two pages at most). */
+export async function listRepos(token: string): Promise<GithubRepoItem[]> {
+  const out: GithubRepoItem[] = [];
+  for (let page = 1; page <= 2; page++) {
+    const batch = await gh<{ full_name: string; private: boolean; pushed_at?: string; description?: string | null; language?: string | null }[]>(`/user/repos?sort=pushed&direction=desc&per_page=100&page=${page}&affiliation=owner,collaborator,organization_member`, token);
+    for (const r of batch) out.push({ fullName: r.full_name, private: r.private, pushedAt: r.pushed_at, description: r.description ?? undefined, language: r.language ?? undefined });
+    if (batch.length < 100) break;
+  }
+  return out;
 }
 
 export async function readFile(repo: string, path: string, ref: string | undefined, token?: string): Promise<{ path: string; content: string; truncated: boolean; size: number }> {

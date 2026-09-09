@@ -27,6 +27,15 @@ npm run dev               # API on :8787, web on :5173 (proxied)
 
 Production: `npm run build && npm start` (serves the built client and the API on `PORT`, default 8787). The `Dockerfile` and `railway.json` deploy as-is on Railway (`railway up`), or anywhere that runs a container. Set the same variables there.
 
+## Connecting data: OAuth first
+
+With the two OAuth apps registered (see `.env.example`), the connect dialog offers **Connect Supabase** and **Connect GitHub** buttons: a popup, an authorization, then a picker for the project or repository. The server only brokers the code-for-token exchange (it holds the client secrets); tokens are handed to the browser through a relay page and travel back inside the requests that need them. Supabase queries run through the Management API with `read_only: true` on top of the app's own SQL gate; Supabase tokens are refreshed by the client shortly before they expire. Without the OAuth apps configured, the dialog falls back to a Postgres connection string and a GitHub personal access token, and both remain available under "use … instead" for edge cases (any Postgres, a token for a single repo).
+
+Register the apps once per domain:
+
+- **GitHub** — Settings → Developer settings → OAuth Apps → New OAuth App; callback `https://<domain>/api/auth/github/callback`; copy the client id and generate a secret into `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET`.
+- **Supabase** — Organization settings → OAuth Apps → Add application; redirect `https://<domain>/api/auth/supabase/callback`; scopes Organizations read, Projects read, Database write (required by the query endpoint); copy the client id and secret into `SUPABASE_OAUTH_CLIENT_ID` / `SUPABASE_OAUTH_CLIENT_SECRET`.
+
 ## Protecting your keys
 
 There are no accounts, so the operator's model keys are what to protect:

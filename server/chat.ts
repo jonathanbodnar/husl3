@@ -3,6 +3,7 @@ import { KICKOFF_PROMPT, STATIC_SYSTEM, sessionSystem } from "./brain/systemProm
 import { addUsage, costEvent, zeroUsage } from "./cost.js";
 import { env } from "./env.js";
 import { streamChat, type Message } from "./llm/client.js";
+import { hasDatabase } from "./db/postgres.js";
 import { toolsFor } from "./tools/definitions.js";
 import { executeTool, parseArgs } from "./tools/execute.js";
 
@@ -46,7 +47,7 @@ export async function runChatTurn(req: ChatRequest, emit: (e: ChatEvent) => void
     ...toModelMessages(req.transcript ?? []),
     { role: "user", content: userText },
   ];
-  const tools = toolsFor({ db: !!req.connections?.postgres?.connectionString, github: !!req.connections?.github?.repo });
+  const tools = toolsFor({ db: hasDatabase(req.connections?.postgres), github: !!req.connections?.github?.repo });
   let usage = zeroUsage();
   let usd = 0;
   const account = (u: Usage) => { usage = addUsage(usage, u); const c = costEvent("chat", cfg.model, u, cfg.prices); usd += c.usd; emit({ type: "usage", cost: c }); };

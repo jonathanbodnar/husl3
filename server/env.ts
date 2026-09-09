@@ -70,4 +70,17 @@ export const env = {
     prompts: num("RATE_PROMPTS_PER_HOUR", 10),
   },
   maxToolRounds: num("MAX_TOOL_ROUNDS", 8),
+  /** Public origin for OAuth callbacks; derived from the request when unset. */
+  appOrigin: str("APP_ORIGIN"),
+  github: {
+    clientId: str("GITHUB_CLIENT_ID"),
+    clientSecret: str("GITHUB_CLIENT_SECRET"),
+    oauthBase: str("GITHUB_OAUTH_BASE", "https://github.com"),
+    apiBase: str("GITHUB_API_BASE", "https://api.github.com"),
+  },
+  supabase: {
+    clientId: str("SUPABASE_OAUTH_CLIENT_ID"),
+    clientSecret: str("SUPABASE_OAUTH_CLIENT_SECRET"),
+    apiBase: str("SUPABASE_API_BASE", "https://api.supabase.com"),
+  },
 };

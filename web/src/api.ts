@@ -1,4 +1,4 @@
-import type { ChatEvent, ChatRequest, DbSchema, HealthResponse, PromptsRequest, PromptsResponse, RepoDigest, SiteDigest } from "../../shared/types";
+import type { ChatEvent, ChatRequest, DbSchema, GithubRepoItem, HealthResponse, PostgresConnection, PromptsRequest, PromptsResponse, RepoDigest, SiteDigest, SupabaseProjectItem } from "../../shared/types";
 import { store } from "./state";
 
 export interface BrainIndex { version: string; stages: { id: string; name: string; goal: string }[]; principles: { id: string; key: string; title: string }[]; evidence: Record<string, string> }
@@ -24,7 +24,10 @@ export const api = {
   health: async () => (await fetch("/api/health")).json() as Promise<HealthResponse>,
   brainIndex: async () => { const r = await fetch("/api/brain/index", { headers: headers() }); if (!r.ok) throw new Error(await errorText(r)); return (await r.json()) as BrainIndex; },
   scan: (url: string) => post<SiteDigest>("/api/site/scan", { url }),
-  introspectDb: (connectionString: string) => post<DbSchema>("/api/db/introspect", { connectionString }),
+  introspectDb: (connection: PostgresConnection) => post<DbSchema>("/api/db/introspect", { connection }),
+  githubRepos: async (token: string) => { const r = await fetch("/api/github/repos", { headers: { ...headers(), "x-github-token": token } }); if (!r.ok) throw new Error(await errorText(r)); return (await r.json()) as GithubRepoItem[]; },
+  supabaseProjects: async (token: string) => { const r = await fetch("/api/supabase/projects", { headers: { ...headers(), "x-supabase-token": token } }); if (!r.ok) throw new Error(await errorText(r)); return (await r.json()) as SupabaseProjectItem[]; },
+  supabaseRefresh: (refreshToken: string) => post<{ accessToken: string; refreshToken?: string; expiresAt?: number }>("/api/auth/supabase/refresh", { refreshToken }),
   introspectRepo: (repo: string, token?: string) => post<RepoDigest>("/api/github/introspect", { repo, token }),
   prompts: (req: PromptsRequest) => post<PromptsResponse>("/api/prompts", req),
 

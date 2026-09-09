@@ -69,9 +69,9 @@ export function renderTodos(todos: Todo[]): string {
 export function sessionSystem(req: ChatRequest): string {
   const parts: string[] = [];
   const now = req.clientTime ? new Date(req.clientTime) : new Date();
-  parts.push(`# This session\nDate: ${isNaN(now.getTime()) ? new Date().toISOString().slice(0, 10) : now.toISOString().slice(0, 10)} (the founder's clock). Connections: database ${req.connections?.postgres ? "connected" : "not connected"}; repository ${req.connections?.github ? `connected (${req.connections.github.repo})` : "not connected"}. Ask the founder to connect them (top bar, "Connect") when a question needs data or code they would otherwise guess at.`);
+  parts.push(`# This session\nDate: ${isNaN(now.getTime()) ? new Date().toISOString().slice(0, 10) : now.toISOString().slice(0, 10)} (the founder's clock). Connections: database ${req.connections?.postgres?.connectionString ? "connected (Postgres)" : req.connections?.postgres?.supabase ? `connected (Supabase project ${req.connections.postgres.supabase.projectName ?? req.connections.postgres.supabase.projectRef})` : "not connected"}; repository ${req.connections?.github ? `connected (${req.connections.github.repo})` : "not connected"}. Ask the founder to connect them (top bar, "Connect") when a question needs data or code they would otherwise guess at.`);
   parts.push(renderSite(req.site));
-  if (req.schema && req.connections?.postgres) parts.push(renderSchema(req.schema));
+  if (req.schema && (req.connections?.postgres?.connectionString || req.connections?.postgres?.supabase)) parts.push(renderSchema(req.schema));
   if (req.repo && req.connections?.github) parts.push(renderRepo(req.repo));
   parts.push(renderTodos(req.todos));
   return parts.join("\n\n");

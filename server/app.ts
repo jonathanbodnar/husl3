@@ -2,13 +2,15 @@ import { serveStatic } from "@hono/node-server/serve-static";
 import type { HttpBindings } from "@hono/node-server";
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
-import type { ChatRequest, HealthResponse, PromptsRequest } from "../shared/types.js";
+import type { ChatRequest, HealthResponse, PostgresConnection, PromptsRequest } from "../shared/types.js";
+import { auth } from "./auth/oauth.js";
+import { sbListProjects } from "./db/supabaseMgmt.js";
 import { brainIndex, brainTokensApprox, brainVersion, describeEvidence, brain } from "./brain/render.js";
 import { runChatTurn } from "./chat.js";
 import { DailyBudget } from "./cost.js";
 import { introspect, validateConnectionString } from "./db/postgres.js";
 import { env } from "./env.js";
-import { introspectRepo, parseRepo } from "./github/client.js";
+import { introspectRepo, listRepos, parseRepo } from "./github/client.js";
 import { craftPrompts } from "./prompts/craft.js";
 import { scanSite } from "./site/scan.js";
 
@@ -46,7 +48,8 @@ async function body<T>(c: { req: { header: (k: string) => string | undefined; js
 
 // ── middleware ───────────────────────────────────────────────────────────────
 app.use("/api/*", async (c, next) => {
-  if (env.accessCode && c.req.path !== "/api/health" && c.req.header("x-access-code") !== env.accessCode) return errJson("Access code required", 401);
+  // OAuth start/callback are top-level navigations and cannot carry the header.
+  if (env.accessCode && c.req.path !== "/api/health" && !c.req.path.startsWith("/api/auth/") && c.req.header("x-access-code") !== env.accessCode) return errJson("Access code required", 401);
   await next();
 });
 
@@ -64,6 +67,7 @@ app.get("/api/health", (c) => {
     chat: { configured: !!chat.apiKey, model: chat.model, thinking: chat.thinking },
     prompts: { configured: !!prompts.apiKey, model: prompts.model, thinking: prompts.thinking, thinkingBudget: prompts.thinkingBudget },
     accessCodeRequired: !!env.accessCode,
+    oauth: { github: !!(env.github.clientId && env.github.clientSecret), supabase: !!(env.supabase.clientId && env.supabase.clientSecret) },
     budget: { dailyUsd: env.dailyBudgetUsd, spentTodayUsd: Math.round(budget.spentToday() * 10_000) / 10_000 },
   };
   return c.json(res);
@@ -85,12 +89,30 @@ app.post("/api/site/scan", async (c) => {
   try { return c.json(await scanSite(url)); } catch (e) { return errJson(`Could not read that site: ${msg(e)}`, 502); }
 });
 
+app.route("/api/auth", auth);
+
+app.get("/api/github/repos", async (c) => {
+  if (!limits.scan.take(ipOf(c))) return errJson("Too many requests from this address; try again later", 429);
+  const token = c.req.header("x-github-token");
+  if (!token) return errJson("x-github-token header is required", 400);
+  try { return c.json(await listRepos(token)); } catch (e) { return errJson(msg(e), 502); }
+});
+
+app.get("/api/supabase/projects", async (c) => {
+  if (!limits.scan.take(ipOf(c))) return errJson("Too many requests from this address; try again later", 429);
+  const token = c.req.header("x-supabase-token");
+  if (!token) return errJson("x-supabase-token header is required", 400);
+  try { return c.json(await sbListProjects(token)); } catch (e) { return errJson(msg(e), 502); }
+});
+
 app.post("/api/db/introspect", async (c) => {
   if (!limits.scan.take(ipOf(c))) return errJson("Too many requests from this address; try again later", 429);
-  const { connectionString } = await body<{ connectionString?: string }>(c);
+  const b = await body<{ connectionString?: string; connection?: PostgresConnection }>(c);
+  const conn: PostgresConnection = b.connection ?? { connectionString: b.connectionString };
   try {
-    const cs = validateConnectionString(String(connectionString ?? ""));
-    return c.json(await introspect(cs));
+    if (conn.connectionString) conn.connectionString = validateConnectionString(String(conn.connectionString));
+    else if (!conn.supabase?.accessToken || !conn.supabase.projectRef) return errJson("Provide a connection string or a Supabase project", 400);
+    return c.json(await introspect(conn));
   } catch (e) { return errJson(`Could not connect: ${redact(msg(e))}`, 502); }
 });
 

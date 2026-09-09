@@ -19,7 +19,7 @@ export function Workspace(props: {
   const [pendingUser, setPendingUser] = useState<string | null>(null);
   const [streaming, setStreaming] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [connectOpen, setConnectOpen] = useState(false);
+  const [connectOpen, setConnectOpen] = useState(() => !!(sessionStorage.getItem("vd.oauth.github") || sessionStorage.getItem("vd.oauth.supabase")));
   const [crafting, setCrafting] = useState(false);
   const [showPanel, setShowPanel] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
@@ -33,16 +33,31 @@ export function Workspace(props: {
   const chatConfigured = !!props.health?.chat.configured;
   const promptsConfigured = !!props.health?.prompts.configured;
 
+  /** Supabase Management API tokens expire; refresh shortly before, so a long audit never dies mid-query. */
+  const freshSecrets = useCallback(async (): Promise<Connections> => {
+    const sb = secrets.postgres?.supabase;
+    if (sb?.refreshToken && sb.expiresAt && sb.expiresAt - Date.now() < 5 * 60_000) {
+      try {
+        const t = await api.supabaseRefresh(sb.refreshToken);
+        const next: Connections = { ...secrets, postgres: { supabase: { ...sb, ...t } } };
+        setSecrets(next); store.setSecrets(latest.current.id, next, store.isRemembered(latest.current.id));
+        return next;
+      } catch { /* fall through with the old token; the server reports expiry clearly */ }
+    }
+    return secrets;
+  }, [secrets]);
+
   const send = useCallback(async (text: string, kickoff = false) => {
     if (streaming) return;
     const cur = latest.current;
+    const creds = await freshSecrets();
     const ctrl = new AbortController();
     abortRef.current = ctrl;
     setStreaming(true); setError(null); setLive([]);
     if (!kickoff) setPendingUser(text);
     const req: ChatRequest = {
       site: cur.site,
-      connections: { postgres: secrets.postgres, github: secrets.github },
+      connections: { postgres: creds.postgres, github: creds.github },
       schema: cur.schema,
       repo: cur.repo,
       todos: cur.todos,
@@ -90,7 +105,7 @@ export function Workspace(props: {
     } finally {
       setStreaming(false); setLive(null); setPendingUser(null); abortRef.current = null;
     }
-  }, [props, secrets, streaming]);
+  }, [props, secrets, streaming, freshSecrets]);
 
   // Opening turn, once, after the scan.
   useEffect(() => {
@@ -118,16 +133,17 @@ export function Workspace(props: {
     } catch (e) { say(e instanceof Error ? e.message : String(e)); } finally { setCrafting(false); }
   }, [props, say]);
 
-  const onDb = (conn: string | null, schema: AuditSession["schema"], remember: boolean) => {
-    const next: Connections = { ...secrets, postgres: conn ? { connectionString: conn } : undefined };
+  const onDb = (conn: Connections["postgres"] | null, schema: AuditSession["schema"], remember: boolean) => {
+    const next: Connections = { ...secrets, postgres: conn ?? undefined };
     setSecrets(next); store.setSecrets(s.id, next, remember);
     props.onUpdate({ schema, links: { ...s.links, postgres: !!conn } });
     if (conn && schema) setTimeout(() => void send(`I connected my database (${schema.tables.length} tables${schema.authUsers != null ? `, ${schema.authUsers.toLocaleString()} accounts` : ""}). Place me by the numbers and check the current to-dos against the data before asking me anything else.`), 50);
   };
-  const onRepo = (repo: string | null, token: string | undefined, digest: AuditSession["repo"], remember: boolean) => {
-    const next: Connections = { ...secrets, github: repo ? { repo, token } : undefined };
+  const onRepo = (conn: Connections["github"] | null, digest: AuditSession["repo"], remember: boolean) => {
+    const next: Connections = { ...secrets, github: conn ?? undefined };
     setSecrets(next); store.setSecrets(s.id, next, remember);
-    props.onUpdate({ repo: digest, links: { ...s.links, githubRepo: repo ?? undefined } });
+    props.onUpdate({ repo: digest, links: { ...s.links, githubRepo: conn?.repo } });
+    const repo = conn?.repo;
     if (repo && digest) setTimeout(() => void send(`I connected my repository (${repo}). What shipped recently that the data cannot show yet, and what should I instrument before we go on?`), 50);
   };
 
@@ -169,7 +185,7 @@ export function Workspace(props: {
         <span className="site">{s.site ? <img src={`https://www.google.com/s2/favicons?domain=${s.site.domain}&sz=32`} alt="" width={16} height={16} /> : <span aria-hidden>⎇</span>} {s.label}</span>
         <span className="spacer" />
         <div className="conns">
-          <span className={`chip clickable ${secrets.postgres ? "on" : s.schema ? "stale" : ""}`} onClick={() => setConnectOpen(true)} title={secrets.postgres ? "Database connected" : s.schema ? "Database schema known; reconnect to run queries" : "Connect your database"}><span className="dot" /> Database</span>
+          <span className={`chip clickable ${secrets.postgres ? "on" : s.schema ? "stale" : ""}`} onClick={() => setConnectOpen(true)} title={secrets.postgres?.supabase ? `Supabase · ${secrets.postgres.supabase.projectName ?? secrets.postgres.supabase.projectRef}` : secrets.postgres ? "Database connected" : s.schema ? "Database schema known; reconnect to run queries" : "Connect your database"}><span className="dot" /> {secrets.postgres?.supabase ? "Supabase" : "Database"}</span>
           <span className={`chip clickable ${secrets.github ? "on" : s.repo ? "stale" : ""}`} onClick={() => setConnectOpen(true)} title={secrets.github ? `Repository ${secrets.github.repo}` : s.repo ? "Repository digest known; reconnect to read files" : "Connect your repository"}><span className="dot" /> GitHub</span>
         </div>
         <span className="cost" title={`${tokens.toLocaleString()} tokens this audit · ${tokens ? Math.round((hit / Math.max(1, tokens)) * 100) : 0}% served from the provider's cache · ${s.costs.length} model calls`}>${usd.toFixed(usd < 0.1 ? 3 : 2)}</span>
@@ -182,7 +198,7 @@ export function Workspace(props: {
         <TodoPanel todos={s.todos} brainIndex={props.brainIndex} crafting={crafting} promptsConfigured={promptsConfigured} onCraft={(ids) => void craft(ids)} onChange={(todos) => props.onUpdate({ todos })} onToast={say} />
       </div>
       {connectOpen && (
-        <ConnectDialog connections={secrets} schema={s.schema} repo={s.repo} remembered={store.isRemembered(s.id)} onClose={() => setConnectOpen(false)} onDb={onDb} onRepo={onRepo} />
+        <ConnectDialog health={props.health} connections={secrets} schema={s.schema} repo={s.repo} remembered={store.isRemembered(s.id)} onClose={() => setConnectOpen(false)} onDb={onDb} onRepo={onRepo} />
       )}
       {toast && <div className="toast">{toast}</div>}
     </div>
