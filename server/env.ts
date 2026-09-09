@@ -93,6 +93,11 @@ export const env = {
     oauthBase: str("GITHUB_OAUTH_BASE", "https://github.com"),
     apiBase: str("GITHUB_API_BASE", "https://api.github.com"),
   },
+  /** Graph API version used for the founder's own Meta token. Meta supports each version for two
+   *  years, so this only needs changing every couple of years. */
+  metaGraphVersion: str("META_GRAPH_VERSION", "v26.0"),
+  /** Exists so the Meta flow can be exercised against a mock in tests. */
+  metaGraphBase: str("META_GRAPH_BASE", "https://graph.facebook.com"),
   supabase: {
     clientId: str("SUPABASE_OAUTH_CLIENT_ID"),
     clientSecret: str("SUPABASE_OAUTH_CLIENT_SECRET"),

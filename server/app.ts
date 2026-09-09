@@ -11,6 +11,7 @@ import { DailyBudget } from "./cost.js";
 import { introspect, validateConnectionString } from "./db/postgres.js";
 import { env } from "./env.js";
 import { introspectRepo, listRepos, parseRepo } from "./github/client.js";
+import { metaAdAccounts, metaInsights } from "./ads/meta.js";
 import { parseAdExport } from "./ads/parse.js";
 import { evaluateScoreboard } from "./stats/readiness.js";
 import { runScoreboard } from "./stats/run.js";
@@ -161,6 +162,21 @@ app.post("/api/ads/parse", async (c) => {
   if (typeof b?.text !== "string" || !b.text.trim()) return errJson("text is required", 400);
   if (b.text.length > 5_000_000) return errJson("That export is too large; export a narrower date range.", 413);
   try { return c.json(parseAdExport(b.text, { source: b.source, platform: b.platform })); }
+  catch (e) { return targetError(msg(e)); }
+});
+
+app.post("/api/ads/meta/accounts", async (c) => {
+  { const throttled = throttle("scan", ipOf(c), "requests"); if (throttled) return throttled; }
+  const { token } = await body<{ token?: string }>(c);
+  if (!token?.trim()) return errJson("token is required", 400);
+  try { return c.json(await metaAdAccounts(token.trim())); } catch (e) { return targetError(msg(e)); }
+});
+
+app.post("/api/ads/meta/import", async (c) => {
+  { const throttled = throttle("scan", ipOf(c), "requests"); if (throttled) return throttled; }
+  const b = await body<{ token?: string; adAccountId?: string; since?: string; until?: string }>(c);
+  if (!b?.token?.trim() || !b.adAccountId?.trim()) return errJson("token and adAccountId are required", 400);
+  try { return c.json(await metaInsights(b.token.trim(), b.adAccountId.trim(), String(b.since ?? ""), String(b.until ?? ""))); }
   catch (e) { return targetError(msg(e)); }
 });
 

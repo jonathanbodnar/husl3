@@ -33,6 +33,8 @@ export const api = {
   prompts: (req: PromptsRequest) => post<PromptsResponse>("/api/prompts", req),
   runStats: (connection: PostgresConnection | undefined, scoreboard: Scoreboard, only?: string[], ads?: AdDataset | null) => post<{ results: Record<string, StatResult>; computedAt: string; eval: ScoreboardEval }>("/api/stats/run", { connection, scoreboard, only, ads }),
   parseAds: (text: string, source?: string, platform?: string) => post<AdDataset>("/api/ads/parse", { text, source, platform }),
+  metaAccounts: (token: string) => post<{ id: string; accountId: string; name: string; currency?: string; timezone?: string; disabled?: boolean }[]>("/api/ads/meta/accounts", { token }),
+  metaImport: (token: string, adAccountId: string, since: string, until: string) => post<AdDataset>("/api/ads/meta/import", { token, adAccountId, since, until }),
 
   async chat(req: ChatRequest, onEvent: (e: ChatEvent) => void, signal: AbortSignal): Promise<void> {
     const res = await fetch("/api/chat", { method: "POST", headers: headers(), body: JSON.stringify(req), signal });

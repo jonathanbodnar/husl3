@@ -46,11 +46,37 @@ export function ConnectDialog(props: {
   const [adBusy, setAdBusy] = useState(false);
   const [adMsg, setAdMsg] = useState<Msg>(props.ads?.rows.length ? { ok: true, text: describeAds(props.ads) } : null);
   const [pasted, setPasted] = useState("");
+  const [adRoute, setAdRoute] = useState<"file" | "meta">("file");
+  const [metaToken, setMetaToken] = useState("");
+  const [metaHelp, setMetaHelp] = useState(false);
+  const [metaAccounts, setMetaAccounts] = useState<{ id: string; accountId: string; name: string; currency?: string; timezone?: string; disabled?: boolean }[] | null>(null);
+  const [metaAccount, setMetaAccount] = useState("");
+  const isoDaysAgo = (n: number) => new Date(Date.now() - n * 86_400_000).toLocaleDateString("en-CA");
+  const [since, setSince] = useState(() => isoDaysAgo(30));
+  const [until, setUntil] = useState(() => isoDaysAgo(1));
   const ingest = async (text: string, source: string) => {
     setAdBusy(true); setAdMsg(null);
     try { const ds = await api.parseAds(text, source); setAdMsg({ ok: true, text: describeAds(ds) }); props.onAds(ds); }
     catch (e) { setAdMsg({ ok: false, text: e instanceof Error ? e.message : String(e) }); } finally { setAdBusy(false); }
   };
+  const loadMetaAccounts = async () => {
+    setAdBusy(true); setAdMsg(null);
+    try {
+      const list = await api.metaAccounts(metaToken.trim());
+      setMetaAccounts(list);
+      if (list.length === 1) setMetaAccount(list[0].id);
+      if (!list.length) setAdMsg({ ok: false, text: "That token works, but it can see no ad accounts. Give its user or system user access to the ad account in Business settings." });
+    } catch (e) { setAdMsg({ ok: false, text: e instanceof Error ? e.message : String(e) }); } finally { setAdBusy(false); }
+  };
+  const importMeta = async () => {
+    setAdBusy(true); setAdMsg(null);
+    try {
+      const ds = await api.metaImport(metaToken.trim(), metaAccount, since, until);
+      setAdMsg({ ok: true, text: describeAds(ds) });
+      props.onAds(ds);
+    } catch (e) { setAdMsg({ ok: false, text: e instanceof Error ? e.message : String(e) }); } finally { setAdBusy(false); }
+  };
+
   const onFile = async (file: File | undefined) => {
     if (!file) return;
     if (file.size > 5_000_000) { setAdMsg({ ok: false, text: "That file is larger than 5 MB; export a narrower date range." }); return; }
@@ -253,30 +279,93 @@ export function ConnectDialog(props: {
           <section>
             <h3>Ad spend</h3>
             <p className="desc">If you buy traffic, the guide needs what you spent to work out what an activated user and a payer actually cost. There is no ad account to connect and no permission to grant: export a campaign report from your ad platform and drop the file here. Meta and Google both require an approved app for API access, which would put a review between you and your own numbers; your own export does not.</p>
-            <details className="howto">
-              <summary>How to export it</summary>
-              <ul>
-                <li><b>Meta (Facebook/Instagram):</b> Ads Manager → Campaigns. Set your date range, open <i>Breakdown</i> and pick <b>By Day</b> under Time, then <i>Columns → Customise columns</i> and tick Amount spent, Impressions, Link clicks and Campaign ID. Export → CSV.</li>
-                <li><b>Google Ads:</b> Campaigns. Set the date range, <i>Segment → Time → Day</i>, add the Campaign ID column, then the download icon → .csv.</li>
-                <li>The <b>campaign ID</b> is worth including: it survives a campaign being renamed, so spend can be matched to the accounts in your database that carry it.</li>
-                <li>Any platform works if the file has a cost column and a campaign or date column. The title and total rows these exports add are handled.</li>
-              </ul>
-            </details>
-            <div className="rowb">
-              <label className={`btn sm${adBusy ? " disabled" : ""}`} style={{ cursor: adBusy ? "default" : "pointer" }}>
-                {adBusy ? <><span className="spin" /> reading…</> : props.ads?.rows.length ? "Replace file" : "Choose a CSV file"}
-                <input type="file" accept=".csv,.tsv,.txt,text/csv,text/plain,text/tab-separated-values" style={{ display: "none" }} disabled={adBusy} onChange={(e) => { void onFile(e.target.files?.[0]); e.currentTarget.value = ""; }} />
-              </label>
-              {props.ads?.rows.length ? <button className="btn sm" onClick={() => { setAdMsg(null); props.onAds(null); }}>Remove</button> : null}
+            <div className="adroutes" role="tablist">
+              <button role="tab" aria-selected={adRoute === "file"} className={adRoute === "file" ? "on" : ""} onClick={() => { setAdRoute("file"); setAdMsg(null); }}>Upload an export</button>
+              <button role="tab" aria-selected={adRoute === "meta"} className={adRoute === "meta" ? "on" : ""} onClick={() => { setAdRoute("meta"); setAdMsg(null); }}>Connect Meta with a token</button>
             </div>
-            <details className="howto">
-              <summary>Or paste the rows</summary>
-              <textarea rows={4} placeholder={"Campaign,Day,Cost\nBrand,2026-08-01,123.45"} value={pasted} onChange={(e) => setPasted(e.target.value)} />
-              <div className="rowb"><button className="btn sm" disabled={adBusy || !pasted.trim()} onClick={() => void ingest(pasted, "pasted")}>Use pasted rows</button></div>
-            </details>
+
+            {adRoute === "file" ? (
+              <>
+                <details className="howto">
+                  <summary>How to export it</summary>
+                  <ul>
+                    <li><b>Meta (Facebook/Instagram):</b> Ads Manager → Campaigns. Set your date range, open <i>Breakdown</i> and pick <b>By Day</b> under Time, then <i>Columns → Customise columns</i> and tick Amount spent, Impressions, Link clicks and Campaign ID. Export → CSV.</li>
+                    <li><b>Google Ads:</b> Campaigns. Set the date range, <i>Segment → Time → Day</i>, add the Campaign ID column, then the download icon → .csv.</li>
+                    <li>The <b>campaign ID</b> is worth including: it survives a campaign being renamed, so spend can be matched to the accounts in your database that carry it.</li>
+                    <li>Any platform works if the file has a cost column and a campaign or date column. The title and total rows these exports add are handled.</li>
+                  </ul>
+                </details>
+                <div className="rowb">
+                  <label className={`btn sm${adBusy ? " disabled" : ""}`} style={{ cursor: adBusy ? "default" : "pointer" }}>
+                    {adBusy ? <><span className="spin" /> reading…</> : props.ads?.rows.length ? "Replace file" : "Choose a CSV file"}
+                    <input type="file" accept=".csv,.tsv,.txt,text/csv,text/plain,text/tab-separated-values" style={{ display: "none" }} disabled={adBusy} onChange={(e) => { void onFile(e.target.files?.[0]); e.currentTarget.value = ""; }} />
+                  </label>
+                  {props.ads?.rows.length ? <button className="btn sm" onClick={() => { setAdMsg(null); props.onAds(null); }}>Remove</button> : null}
+                </div>
+                <details className="howto">
+                  <summary>Or paste the rows</summary>
+                  <textarea rows={4} placeholder={"Campaign,Day,Cost\nBrand,2026-08-01,123.45"} value={pasted} onChange={(e) => setPasted(e.target.value)} />
+                  <div className="rowb"><button className="btn sm" disabled={adBusy || !pasted.trim()} onClick={() => void ingest(pasted, "pasted")}>Use pasted rows</button></div>
+                </details>
+              </>
+            ) : (
+              <>
+                <p className="desc">Meta will not let a tool like this read your ad account on your behalf without an approved app and a review. It will let <i>you</i> read your own account: make a free app of your own, mint a token against it, and paste the token here. Nothing is reviewed and nothing is stored — the token stays in this browser and travels only with the requests that use it.</p>
+                <div className="rowb">
+                  <button className="btn sm" aria-expanded={metaHelp} onClick={() => setMetaHelp((v) => !v)}>{metaHelp ? "Hide the steps" : "How do I get a token?"}</button>
+                  <span className="note">About five minutes, once.</span>
+                </div>
+                {metaHelp && (
+                  <div className="howtobox">
+                    <b>1. Make an app (free, no review)</b>
+                    <ol>
+                      <li>Go to <a href="https://developers.facebook.com/apps" target="_blank" rel="noreferrer">developers.facebook.com/apps</a> → <i>Create app</i>. Pick the <b>Business</b> type and give it any name; this app is only a key, it is never published.</li>
+                      <li>On the app dashboard, add the <b>Marketing API</b> product.</li>
+                    </ol>
+                    <b>2a. A token that keeps working — system user (recommended)</b>
+                    <ol>
+                      <li>Open <a href="https://business.facebook.com/settings" target="_blank" rel="noreferrer">Business settings</a> → <i>Users → System users</i> → <b>Add</b>, and give it any name with the Employee role.</li>
+                      <li><i>Add assets</i> → assign your <b>ad account</b> (View performance is enough) and the app you just made.</li>
+                      <li>Click <b>Generate new token</b>, choose that app, tick <b>ads_read</b>, and pick a token that does not expire.</li>
+                      <li>Copy it once — Meta shows it a single time — and paste it below.</li>
+                    </ol>
+                    <b>2b. A token in one minute — user token (expires in about an hour)</b>
+                    <ol>
+                      <li>Open the <a href="https://developers.facebook.com/tools/explorer" target="_blank" rel="noreferrer">Graph API Explorer</a>, choose your app in the top right.</li>
+                      <li>Add the <b>ads_read</b> permission, click <b>Generate access token</b> and approve.</li>
+                      <li>Copy it and paste it below. Good for trying this now; use 2a if you want it to keep working.</li>
+                    </ol>
+                    <div className="note">Why the extra step: an app serving other people's ad accounts needs Advanced Access to ads_read, which means Business Verification and app review. Reading <i>your own</i> account with <i>your own</i> app needs neither, because you hold a role on both.</div>
+                  </div>
+                )}
+                <label htmlFor="metatoken">Access token</label>
+                <input id="metatoken" type="password" placeholder="EAAG…" value={metaToken} onChange={(e) => { setMetaToken(e.target.value); setMetaAccounts(null); }} autoComplete="off" />
+                {!metaAccounts ? (
+                  <div className="rowb"><button className="btn primary sm" disabled={adBusy || !metaToken.trim()} onClick={() => void loadMetaAccounts()}>{adBusy ? <><span className="spin" /> checking…</> : "Load my ad accounts"}</button></div>
+                ) : (
+                  <>
+                    <label htmlFor="metaacct">Ad account</label>
+                    <select id="metaacct" className="pick" value={metaAccount} onChange={(e) => setMetaAccount(e.target.value)}>
+                      <option value="">Choose an ad account…</option>
+                      {metaAccounts.map((a) => <option key={a.id} value={a.id}>{a.name}{a.currency ? ` · ${a.currency}` : ""}{a.timezone ? ` · ${a.timezone}` : ""}{a.disabled ? " · inactive" : ""}</option>)}
+                    </select>
+                    <div className="rowb">
+                      <label className="note" htmlFor="since">From</label>
+                      <input id="since" type="date" value={since} max={until} onChange={(e) => setSince(e.target.value)} />
+                      <label className="note" htmlFor="until">to</label>
+                      <input id="until" type="date" value={until} min={since} onChange={(e) => setUntil(e.target.value)} />
+                    </div>
+                    <div className="rowb">
+                      <button className="btn primary sm" disabled={adBusy || !metaAccount} onClick={() => void importMeta()}>{adBusy ? <><span className="spin" /> importing…</> : "Import spend"}</button>
+                      <button className="btn sm" onClick={() => { setMetaAccounts(null); setMetaAccount(""); }}>Use a different token</button>
+                    </div>
+                  </>
+                )}
+              </>
+            )}
             {adMsg && <div className={adMsg.ok ? "ok" : "bad"}>{adMsg.text}</div>}
             {props.ads?.notes.length ? <div className="note">{props.ads.notes.join(" ")}</div> : null}
-            <div className="note">The file is parsed on the server and kept in this browser with the rest of the audit. It is a snapshot from the day you exported it, not a live feed — re-export when you want fresh numbers.</div>
+            <div className="note">Spend is kept in this browser with the rest of the audit, and it is a snapshot: an uploaded file is fixed at the day you exported it, and a token import is fixed at the moment you pressed Import. Run it again when you want fresher numbers.</div>
           </section>
 
           <section>

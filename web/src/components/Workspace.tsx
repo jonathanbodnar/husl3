@@ -85,6 +85,12 @@ export function Workspace(props: {
   const abortRef = useRef<AbortController | null>(null);
   /** A connect message that fired while a turn was streaming; sent as soon as the turn ends. */
   const queuedRef = useRef<string | null>(null);
+  /**
+   * Whether a turn is in flight, tracked synchronously. The `streaming` state cannot decide this: the
+   * retry that drains the queue is scheduled from inside the finishing turn, so its closure still sees
+   * streaming === true and would re-queue the message forever instead of sending it.
+   */
+  const streamingRef = useRef(false);
   const started = useRef(false);
   const latest = useRef(s);
   latest.current = s;
@@ -110,7 +116,8 @@ export function Workspace(props: {
   }, [applySecrets]);
 
   const send = useCallback(async (text: string, kickoff = false) => {
-    if (streaming) { if (!kickoff) queuedRef.current = text; return; }
+    if (streamingRef.current) { if (!kickoff) queuedRef.current = text; return; }
+    streamingRef.current = true;
     const cur = latest.current;
     const creds = await freshSecrets();
     const ctrl = new AbortController();
@@ -189,11 +196,12 @@ export function Workspace(props: {
           props.onUpdate((prev) => ({ ...prev, transcript: [...prev.transcript, ...salvage], costs: [...prev.costs, ...costs], updatedAt: new Date().toISOString() }));
         }
       }
+      streamingRef.current = false;
       setStreaming(false); setLive(null); setPendingUser(null); abortRef.current = null;
       const queued = queuedRef.current;
       if (queued) { queuedRef.current = null; setTimeout(() => void send(queued), 30); }
     }
-  }, [props, streaming, freshSecrets]);
+  }, [props, freshSecrets]);
 
   // Opening turn, once, after the scan.
   useEffect(() => {
