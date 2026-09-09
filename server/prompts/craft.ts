@@ -24,13 +24,16 @@ Output JSON only, exactly: {"prompts":[{"todo_id":"…","prompt":"…"}]}`;
 const cap = (t: string | undefined | null, n: number) => (t ? (t.length > n ? t.slice(0, n) + " …" : t) : "");
 
 function productContext(req: PromptsRequest): string {
-  const home = req.site.pages.find((p) => p.kind === "home") ?? req.site.pages[0];
-  const pricing = req.site.pages.find((p) => p.kind === "pricing");
-  const L = [`Domain: ${req.site.domain}`, `Home page title: ${home?.title ?? ""}`, `Home page text: ${cap(home?.text, 900)}`];
-  if (home?.ctas.length) L.push(`CTAs: ${home.ctas.slice(0, 10).join(" | ")}`);
-  const prices = [...(pricing?.prices ?? []), ...(home?.prices ?? [])].slice(0, 10);
-  if (prices.length) L.push(`Prices seen: ${prices.join(" | ")}`);
-  if (req.site.stack.length) L.push(`Stack seen on the site: ${req.site.stack.join(", ")}`);
+  const L: string[] = [];
+  if (req.site) {
+    const home = req.site.pages.find((p) => p.kind === "home") ?? req.site.pages[0];
+    const pricing = req.site.pages.find((p) => p.kind === "pricing");
+    L.push(`Domain: ${req.site.domain}`, `Home page title: ${home?.title ?? ""}`, `Home page text: ${cap(home?.text, 900)}`);
+    if (home?.ctas.length) L.push(`CTAs: ${home.ctas.slice(0, 10).join(" | ")}`);
+    const prices = [...(pricing?.prices ?? []), ...(home?.prices ?? [])].slice(0, 10);
+    if (prices.length) L.push(`Prices seen: ${prices.join(" | ")}`);
+    if (req.site.stack.length) L.push(`Stack seen on the site: ${req.site.stack.join(", ")}`);
+  } else L.push("Public site: none scanned (the audit started from the repository; do not invent pages, copy or prices).");
   if (req.repo) {
     L.push(`Repository: ${req.repo.repo} (default branch ${req.repo.defaultBranch}${req.repo.language ? `, ${req.repo.language}` : ""})`);
     if (req.repo.stack.length) L.push(`Stack from manifest: ${req.repo.stack.join(", ")}`);

@@ -104,7 +104,7 @@ app.post("/api/chat", async (c) => {
   if (!limits.chat.take(ipOf(c))) return errJson("Too many messages from this address this hour; try again later", 429);
   if (budget.exhausted()) return errJson("Today's model budget is used up; the audit resumes tomorrow (UTC).", 503);
   const req = await body<ChatRequest>(c);
-  if (!req?.site?.pages || !Array.isArray(req.transcript) || !Array.isArray(req.todos)) return errJson("Malformed chat request", 400);
+  if (!(req?.site?.pages || req?.repo?.repo) || !Array.isArray(req.transcript) || !Array.isArray(req.todos)) return errJson("Malformed chat request", 400);
   if (!req.kickoff && (typeof req.message !== "string" || !req.message.trim())) return errJson("message is required", 400);
   if (req.message && req.message.length > 8000) return errJson("Message too long", 400);
   return streamSSE(c, async (stream) => {
@@ -133,7 +133,7 @@ app.post("/api/prompts", async (c) => {
   if (!limits.prompts.take(ipOf(c))) return errJson("Too many prompt requests from this address this hour", 429);
   if (budget.exhausted()) return errJson("Today's model budget is used up; the audit resumes tomorrow (UTC).", 503);
   const req = await body<PromptsRequest>(c);
-  if (!req?.site || !Array.isArray(req.todos)) return errJson("Malformed prompts request", 400);
+  if (!(req?.site || req?.repo) || !Array.isArray(req.todos)) return errJson("Malformed prompts request", 400);
   try {
     const res = await craftPrompts(req, c.req.raw.signal);
     budget.add(res.cost.usd);

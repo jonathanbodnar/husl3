@@ -23,6 +23,7 @@ export function Workspace(props: {
   const [crafting, setCrafting] = useState(false);
   const [showPanel, setShowPanel] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
+  const [connectDismissed, setConnectDismissed] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
   const started = useRef(false);
   const latest = useRef(s);
@@ -134,9 +135,28 @@ export function Workspace(props: {
     const md = exportMarkdown(s, props.brainIndex);
     const blob = new Blob([md], { type: "text/markdown" });
     const a = document.createElement("a");
-    a.href = URL.createObjectURL(blob); a.download = `vibe-distribution-${s.site.domain}.md`; a.click();
+    a.href = URL.createObjectURL(blob); a.download = `vibe-distribution-${s.label.replace(/[^a-z0-9.-]+/gi, "-")}.md`; a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 1000);
   };
+
+  const hasReply = s.transcript.some((m) => m.role === "assistant" && !!m.content);
+  const missing = [!secrets.github && "repository", !secrets.postgres && "database"].filter(Boolean) as string[];
+  const connectNotice = hasReply && missing.length > 0 && !connectDismissed ? (
+    <div className="connectcard" role="note">
+      <div>
+        <b>{missing.length === 2 ? "Your placement is provisional." : `Connect your ${missing[0]} too.`}</b>{" "}
+        {missing.length === 2
+          ? "Connect your repository and your database so the guide reads what you shipped and what users actually did, instead of guessing from the public site."
+          : missing[0] === "database"
+            ? "With read-only access the guide measures signups, activation and who pays, instead of asking you to estimate."
+            : "With the repository the guide reads the code behind signup, pricing and tracking, and spots what shipped that the data cannot show yet."}
+      </div>
+      <div className="row">
+        <button className="btn primary sm" onClick={() => setConnectOpen(true)}>Connect</button>
+        <button className="btn ghost sm" onClick={() => setConnectDismissed(true)}>Not now</button>
+      </div>
+    </div>
+  ) : null;
 
   const usd = totalUsd(s.costs);
   const tokens = s.costs.reduce((n, c) => n + c.usage.promptHit + c.usage.promptMiss + c.usage.completion, 0);
@@ -146,7 +166,7 @@ export function Workspace(props: {
     <div className="ws">
       <header className="topbar">
         <button className="btn ghost sm brand" onClick={props.onExit} title="Back to start"><span className="mark" /> <span className="word">Vibe Distribution</span></button>
-        <span className="site"><img src={`https://www.google.com/s2/favicons?domain=${s.site.domain}&sz=32`} alt="" width={16} height={16} /> {s.site.domain}</span>
+        <span className="site">{s.site ? <img src={`https://www.google.com/s2/favicons?domain=${s.site.domain}&sz=32`} alt="" width={16} height={16} /> : <span aria-hidden>⎇</span>} {s.label}</span>
         <span className="spacer" />
         <div className="conns">
           <span className={`chip clickable ${secrets.postgres ? "on" : s.schema ? "stale" : ""}`} onClick={() => setConnectOpen(true)} title={secrets.postgres ? "Database connected" : s.schema ? "Database schema known; reconnect to run queries" : "Connect your database"}><span className="dot" /> Database</span>
@@ -158,7 +178,7 @@ export function Workspace(props: {
         <button className="btn ghost sm panel-toggle" onClick={() => setShowPanel((v) => !v)} id="panel-toggle">{showPanel ? "Chat" : `To-dos (${s.todos.filter((t) => t.status !== "dismissed").length})`}</button>
       </header>
       <div className={`main${showPanel ? " show-panel" : ""}`}>
-        <Chat transcript={s.transcript} live={live} pendingUser={pendingUser} streaming={streaming} error={error} disabled={!chatConfigured} onSend={(t) => void send(t)} onStop={stop} />
+        <Chat transcript={s.transcript} live={live} pendingUser={pendingUser} streaming={streaming} error={error} disabled={!chatConfigured} notice={connectNotice} onSend={(t) => void send(t)} onStop={stop} />
         <TodoPanel todos={s.todos} brainIndex={props.brainIndex} crafting={crafting} promptsConfigured={promptsConfigured} onCraft={(ids) => void craft(ids)} onChange={(todos) => props.onUpdate({ todos })} onToast={say} />
       </div>
       {connectOpen && (
@@ -170,7 +190,7 @@ export function Workspace(props: {
 }
 
 function exportMarkdown(s: AuditSession, brainIndex: BrainIndex | null): string {
-  const L: string[] = [`# Vibe Distribution audit — ${s.site.domain}`, ``, `_${new Date(s.createdAt).toLocaleString()} · brain ${brainIndex?.version ?? ""} · $${totalUsd(s.costs).toFixed(3)} of model time_`, ``, `## What to do`];
+  const L: string[] = [`# Vibe Distribution audit — ${s.label}`, ``, `_${new Date(s.createdAt).toLocaleString()} · brain ${brainIndex?.version ?? ""} · $${totalUsd(s.costs).toFixed(3)} of model time_`, ``, `## What to do`];
   for (const t of [...s.todos].sort((a, b) => a.order - b.order)) {
     if (t.status === "dismissed") continue;
     const stage = brainIndex?.stages.find((x) => x.id === t.stage)?.name ?? t.stage;

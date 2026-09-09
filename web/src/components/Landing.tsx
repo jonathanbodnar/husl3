@@ -3,12 +3,14 @@ import type { HealthResponse } from "../../../shared/types";
 import { store, totalUsd, type AuditSession } from "../state";
 
 const PHASES = ["Reading the home page…", "Looking for pricing and signup…", "Reading the calls to action…", "Noting the stack…", "Almost there…"];
+const REPO_PHASES = ["Reading the repository…", "Listing recent commits…", "Looking for a live URL in the README…", "Scanning the site it names…", "Almost there…"];
 
 export function Landing(props: {
   health: HealthResponse | null;
   healthError: string | null;
   sessions: AuditSession[];
   onStart: (url: string) => Promise<void>;
+  onStartRepo: (repo: string, token: string | undefined, remember: boolean) => Promise<void>;
   onResume: (id: string) => void;
   onDelete: (id: string) => void;
   onAccessCode: (code: string) => void;
@@ -18,20 +20,31 @@ export function Landing(props: {
   const [phase, setPhase] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [code, setCode] = useState("");
+  const [mode, setMode] = useState<"site" | "repo">("site");
+  const [repo, setRepo] = useState("");
+  const [token, setToken] = useState("");
+  const [remember, setRemember] = useState(false);
   const needsCode = !!props.health?.accessCodeRequired && !store.accessCode();
 
   useEffect(() => {
     if (!busy) return;
     setPhase(0);
-    const t = setInterval(() => setPhase((p) => Math.min(PHASES.length - 1, p + 1)), 2200);
+    const t = setInterval(() => setPhase((p) => Math.min(PHASES.length - 1, p + 1)), mode === "repo" ? 3000 : 2200);
     return () => clearInterval(t);
-  }, [busy]);
+  }, [busy, mode]);
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!url.trim() || busy) return;
     setBusy(true); setError(null);
     try { await props.onStart(url.trim()); } catch (err) { setError(err instanceof Error ? err.message : String(err)); } finally { setBusy(false); }
+  };
+
+  const submitRepo = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!repo.trim() || busy) return;
+    setBusy(true); setError(null);
+    try { await props.onStartRepo(repo.trim(), token.trim() || undefined, remember); } catch (err) { setError(err instanceof Error ? err.message : String(err)); } finally { setBusy(false); }
   };
 
   const notConfigured = props.health && !props.health.chat.configured;
@@ -58,16 +71,36 @@ export function Landing(props: {
           </form>
         ) : busy ? (
           <div className="scanning ui">
-            <div><span className="pulse" /> &nbsp;{PHASES[phase]}</div>
-            <div className="muted small">Reading up to six public pages. Nothing is stored on the server.</div>
+            <div><span className="pulse" /> &nbsp;{(mode === "repo" ? REPO_PHASES : PHASES)[phase]}</div>
+            <div className="muted small">{mode === "repo" ? "Reading the tree, manifest, README and recent commits. Nothing is stored on the server." : "Reading up to six public pages. Nothing is stored on the server."}</div>
           </div>
+        ) : mode === "site" ? (
+          <>
+            <form className="urlform" onSubmit={submit}>
+              <input type="text" inputMode="url" autoFocus placeholder="yourproduct.com" value={url} onChange={(e) => setUrl(e.target.value)} aria-label="Your site" />
+              <button className="btn primary" type="submit" disabled={!url.trim()}>Start the audit</button>
+            </form>
+            <button type="button" className="alt" onClick={() => { setMode("repo"); setError(null); }}>No public site yet? Start from a GitHub repository →</button>
+          </>
         ) : (
-          <form className="urlform" onSubmit={submit}>
-            <input type="text" inputMode="url" autoFocus placeholder="yourproduct.com" value={url} onChange={(e) => setUrl(e.target.value)} aria-label="Your site" />
-            <button className="btn primary" type="submit" disabled={!url.trim()}>Start the audit</button>
+          <form className="repoform" onSubmit={submitRepo}>
+            <label htmlFor="repo-entry" className="muted small">Repository (owner/name or GitHub URL). The guide reads the tree, manifest, README and recent commits, and scans the live site if the README names one.</label>
+            <input id="repo-entry" type="text" autoFocus placeholder="owner/name" value={repo} onChange={(e) => setRepo(e.target.value)} aria-label="Your repository" />
+            <input type="password" placeholder="github_pat_… (only for private repositories; read-only Contents + Metadata)" value={token} onChange={(e) => setToken(e.target.value)} aria-label="GitHub token" autoComplete="off" />
+            <div className="row">
+              <button className="btn primary" type="submit" disabled={!repo.trim()}>Read the repository</button>
+              <label className="muted small" style={{ display: "flex", gap: ".4rem", alignItems: "center", cursor: "pointer" }}><input type="checkbox" checked={remember} onChange={(e) => setRemember(e.target.checked)} /> remember the token on this device</label>
+              <span style={{ flex: 1 }} />
+              <button type="button" className="alt" onClick={() => { setMode("site"); setError(null); }}>Use a site instead</button>
+            </div>
           </form>
         )}
-        {error && <div className="banner error">{error}</div>}
+        {error && (
+          <div className="banner error">
+            {error}
+            {mode === "site" && /resolve|spelling/i.test(error) && <div style={{ marginTop: ".4rem" }}><button type="button" className="alt" onClick={() => { setMode("repo"); setError(null); }}>Start from a repository instead →</button></div>}
+          </div>
+        )}
 
         <div className="facts ui">
           <div className="fact"><b>97 days</b><span>of one AI SaaS running the method, audited 209 times</span></div>
@@ -82,9 +115,9 @@ export function Landing(props: {
           <h3>Recent audits</h3>
           {props.sessions.map((s) => (
             <div className="row" key={s.id}>
-              <button className="link" onClick={() => props.onResume(s.id)}>{s.site.domain}</button>
+              <button className="link" onClick={() => props.onResume(s.id)}>{s.label}</button>
               <span className="muted small">{s.todos.filter((t) => t.status !== "dismissed").length} to-dos · {new Date(s.updatedAt).toLocaleDateString()} · ${totalUsd(s.costs).toFixed(2)}</span>
-              <button className="btn ghost sm danger" onClick={() => { if (confirm(`Delete the audit of ${s.site.domain} from this browser?`)) props.onDelete(s.id); }}>Delete</button>
+              <button className="btn ghost sm danger" onClick={() => { if (confirm(`Delete the audit of ${s.label} from this browser?`)) props.onDelete(s.id); }}>Delete</button>
             </div>
           ))}
         </section>

@@ -12,6 +12,8 @@ export function Chat(props: {
   streaming: boolean;
   error: string | null;
   disabled: boolean;
+  /** Optional card shown after the latest message (e.g. the connect prompt). */
+  notice?: React.ReactNode;
   onSend: (text: string) => void;
   onStop: () => void;
 }) {
@@ -30,7 +32,7 @@ export function Chat(props: {
   useEffect(() => {
     const el = scrollRef.current;
     if (el && stick.current) el.scrollTop = el.scrollHeight;
-  }, [props.transcript, props.live, props.pendingUser]);
+  }, [props.transcript, props.live, props.pendingUser, props.notice]);
   useEffect(() => {
     const ta = taRef.current;
     if (!ta) return;
@@ -61,6 +63,7 @@ export function Chat(props: {
               : <ToolCard key={seg.id} name={seg.name} ui={seg.ui} pending={!seg.ui} args={seg.args} />,
           )}
           {props.streaming && props.live && props.live.length === 0 && <div className="msg assistant muted ui small"><span className="spin" /> &nbsp;thinking…</div>}
+          {!props.streaming && props.notice}
           {props.error && <div className="banner error ui">{props.error}</div>}
         </div>
       </div>

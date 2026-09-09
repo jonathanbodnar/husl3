@@ -36,6 +36,21 @@ export function App() {
     setCurrentId(s.id);
   }, []);
 
+  /** Repo-first entry: read the repository, then scan the live site it names, if any. */
+  const startFromRepo = useCallback(async (repo: string, token: string | undefined, remember: boolean) => {
+    const digest = await api.introspectRepo(repo, token);
+    let site = null as Awaited<ReturnType<typeof api.scan>> | null;
+    for (const candidate of digest.siteCandidates.slice(0, 3)) {
+      try { site = await api.scan(candidate); break; } catch { /* try the next candidate */ }
+    }
+    const s = newSession(site, site?.domain ?? digest.repo);
+    s.repo = digest;
+    s.links = { postgres: false, githubRepo: digest.repo };
+    store.setSecrets(s.id, { github: { repo: digest.repo, token } }, remember);
+    setSessions((prev) => [s, ...prev]);
+    setCurrentId(s.id);
+  }, []);
+
   const remove = useCallback((id: string) => {
     store.clearSecrets(id);
     setSessions((prev) => prev.filter((s) => s.id !== id));
@@ -49,6 +64,7 @@ export function App() {
         healthError={healthError}
         sessions={sessions}
         onStart={start}
+        onStartRepo={startFromRepo}
         onResume={(id) => setCurrentId(id)}
         onDelete={remove}
         onAccessCode={(code) => { store.setAccessCode(code); api.health().then(setHealth).catch(() => {}); api.brainIndex().then(setBrainIndex).catch(() => {}); }}

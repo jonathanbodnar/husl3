@@ -139,8 +139,24 @@ export function parsePage(html: string, url: string, status: number, headers: He
 function safeResolve(href: string, base: string): string { try { return new URL(href, base).toString(); } catch { return href; } }
 
 export async function scanSite(input: string, log: (m: string) => void = () => {}): Promise<SiteDigest> {
-  const url = normalizeUrl(input);
-  const home = await safeFetch(url, { timeoutMs: 15_000 });
+  let url = normalizeUrl(input);
+  let home;
+  try {
+    home = await safeFetch(url, { timeoutMs: 15_000 });
+  } catch (err) {
+    const m = err instanceof Error ? err.message : String(err);
+    if (!/Could not resolve/i.test(m)) throw err;
+    // Some sites only answer on www (or only on the apex); try the other form once before giving up.
+    const u = new URL(url);
+    const alt = u.hostname.startsWith("www.") ? u.hostname.slice(4) : `www.${u.hostname}`;
+    try {
+      u.hostname = alt;
+      home = await safeFetch(u.toString(), { timeoutMs: 15_000 });
+      url = u.toString();
+    } catch {
+      throw new Error(`Could not resolve ${new URL(normalizeUrl(input)).hostname}. Check the spelling, or start the audit from your repository instead.`);
+    }
+  }
   if (home.status >= 400 || !home.text) throw new Error(`The site answered HTTP ${home.status} for ${url}`);
   const finalUrl = home.finalUrl;
   const origin = new URL(finalUrl).origin;

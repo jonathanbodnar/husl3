@@ -93,6 +93,8 @@ export interface RepoDigest {
   treeTruncated?: boolean;
   recentCommits: RepoCommit[];
   commitsByWeek: { week: string; count: number }[];
+  /** Live URLs named by the manifest or README, best first; used to scan the site when the audit starts from a repo. */
+  siteCandidates: string[];
   fetchedAt: string;
 }
 
@@ -133,7 +135,8 @@ export type ChatEvent =
   | { type: "error"; message: string };
 
 export interface ChatRequest {
-  site: SiteDigest;
+  /** null when the audit started from a repository and no live site was found. */
+  site: SiteDigest | null;
   connections?: Connections;
   schema?: DbSchema | null;
   repo?: RepoDigest | null;
@@ -146,7 +149,7 @@ export interface ChatRequest {
 }
 
 export interface PromptsRequest {
-  site: SiteDigest;
+  site: SiteDigest | null;
   schema?: DbSchema | null;
   repo?: RepoDigest | null;
   todos: Todo[];

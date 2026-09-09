@@ -111,7 +111,7 @@ function applyTodoOps(args: Record<string, unknown>, ctx: ToolContext): ToolOutc
 async function fetchPage(args: Record<string, unknown>, ctx: ToolContext): Promise<ToolOutcome> {
   const url = String(args.url ?? "").trim();
   if (!url) throw new Error("url is required");
-  const { page, sameSite } = await fetchPageForTool(url, ctx.req.site.origin);
+  const { page, sameSite } = await fetchPageForTool(url, ctx.req.site?.origin ?? "");
   const content = modelJson({ ...page, text: page.text.slice(0, 5000), sameSite });
   return { content, ui: { name: "fetch_page", ok: page.status < 400, summary: `${page.title || "(untitled)"} — HTTP ${page.status}`, url: page.url } };
 }

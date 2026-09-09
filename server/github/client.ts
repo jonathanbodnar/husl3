@@ -95,6 +95,7 @@ export async function introspectRepo(input: string, token?: string): Promise<Rep
   let manifest: string | undefined;
   if (manifestPath) manifest = await gh<string>(`/repos/${repo}/contents/${encodePath(manifestPath)}?ref=${encodeURIComponent(branch)}`, token, true).catch(() => undefined);
   const stack = manifest && manifestPath ? stackFromManifest(manifestPath, manifest) : [];
+  const siteCandidates = findSiteCandidates(manifestPath, manifest, readme, repo);
   const interesting = t.paths
     .filter((p) => CODE_EXT.test(p) && !EXCLUDE.test(p) && INTERESTING.test(p))
     .map((p) => ({ p, score: (p.match(INTERESTING) ? 2 : 0) + (/(pric|checkout|billing|stripe|signup|onboard|paywall|limit|track|event|analytics)/i.test(p) ? 3 : 0) - p.split("/").length * 0.1 }))
@@ -125,11 +126,27 @@ export async function introspectRepo(input: string, token?: string): Promise<Rep
     treeTruncated: t.truncated,
     recentCommits: recent.slice(0, 60),
     commitsByWeek: [...byWeek.entries()].sort((a, b) => (a[0] < b[0] ? 1 : -1)).map(([week, count]) => ({ week, count })),
+    siteCandidates,
     fetchedAt: new Date().toISOString(),
   };
 }
 
 function encodePath(p: string) { return p.split("/").map(encodeURIComponent).join("/"); }
+
+const NOT_A_SITE = /(github\.com|githubusercontent|shields\.io|badge|img\.|\.(png|jpe?g|gif|svg|webp)(\?|$)|npmjs\.com|pypi\.org|twitter\.com|x\.com|discord|youtube|youtu\.be|linkedin|localhost|127\.0\.0\.1|example\.com|vercel\.app\/|railway\.app\/|choosealicense|opensource\.org|creativecommons|docs\.|developer\.|stackoverflow|reddit\.com|producthunt|medium\.com|dev\.to|codecov|travis|circleci|gitpod|codesandbox|stackblitz)/i;
+
+/** Live URLs the repo names about itself: manifest homepage first, then README links that are not badges, hosts or social profiles. */
+export function findSiteCandidates(manifestPath: string | undefined, manifest: string | undefined, readme: string, repo: string): string[] {
+  const out: string[] = [];
+  const add = (u: string) => { try { const url = new URL(u.trim()); if (!/^https?:$/.test(url.protocol)) return; url.hash = ""; const s = url.toString(); if (!NOT_A_SITE.test(s) && !out.includes(s)) out.push(s); } catch { /* not a url */ } };
+  if (manifest && manifestPath?.endsWith("package.json")) { try { const j = JSON.parse(manifest); if (typeof j.homepage === "string") add(j.homepage); } catch { /* ignore */ } }
+  const name = repo.split("/")[1]?.toLowerCase() ?? "";
+  const links = [...(readme ?? "").matchAll(/https?:\/\/[^\s)<>"'\]]+/g)].map((m) => m[0].replace(/[.,;:!?]+$/, ""));
+  // Prefer links whose host mentions the repo name, then the earliest links in the README.
+  for (const l of links) if (name && l.toLowerCase().includes(name)) add(l);
+  for (const l of links) add(l);
+  return out.slice(0, 4);
+}
 
 function isoWeek(d: Date): string {
   const t = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
