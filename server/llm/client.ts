@@ -86,21 +86,30 @@ export async function streamChat(cfg: ProviderConfig, messages: Message[], tools
   return { content, toolCalls, usage, finishReason };
 }
 
-/** One non-streamed completion that should return JSON. */
+/** One completion that should return JSON. Streams under the hood: Qwen's thinking mode on Model Studio only supports streaming, and streaming also keeps long generations alive through proxies. */
 export async function completeJson(cfg: ProviderConfig, messages: Message[], signal?: AbortSignal): Promise<{ text: string; usage: Usage; reasoning?: string }> {
   const client = makeClient(cfg, 600_000);
   const params: any = {
     model: cfg.model,
     messages,
-    stream: false,
+    stream: true,
+    stream_options: { include_usage: true },
     temperature: 0.3,
     max_tokens: 24_000,
     ...thinkingBody(cfg),
   };
   if (cfg.jsonMode) params.response_format = { type: "json_object" };
-  const res: any = await client.chat.completions.create(params, { signal });
-  const msg = res.choices?.[0]?.message ?? {};
-  return { text: String(msg.content ?? ""), usage: normalizeUsage(res.usage), reasoning: msg.reasoning_content };
+  const stream: any = await client.chat.completions.create(params, { signal });
+  let text = "";
+  let reasoning = "";
+  let usage: Usage = { promptHit: 0, promptMiss: 0, completion: 0, reasoning: 0 };
+  for await (const chunk of stream) {
+    if (chunk.usage) usage = normalizeUsage(chunk.usage);
+    const delta: any = chunk.choices?.[0]?.delta ?? {};
+    if (typeof delta.reasoning_content === "string") reasoning += delta.reasoning_content;
+    if (typeof delta.content === "string") text += delta.content;
+  }
+  return { text, usage, reasoning: reasoning || undefined };
 }
 
 /** Pull the first JSON object out of a model reply that may carry prose or fences. */
