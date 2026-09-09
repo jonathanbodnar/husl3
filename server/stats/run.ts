@@ -10,8 +10,11 @@ import { runAdStat, runDerivedStat } from "./ads.js";
  */
 
 const MAX_SERIES_POINTS = 120;
-/** The brain's rule: never quote a share with a numerator under 5 or a denominator under 100. */
+/** The brain's rule for a share: never quote one with a numerator under 5 or a denominator under 100. */
 const smallN = (k: number, n: number) => k < 5 || n < 100;
+/** The brain's other clause — "below 10 show counts" — is what binds a per-unit figure like cost per
+ *  payer: at three payers one more moves the number by a quarter, so the counts are the honest answer. */
+const PER_UNIT_FLOOR = 10;
 const MAX_STEPS = 12;
 const MAX_ITEMS = 12;
 /** Whole-scoreboard wall-clock budget; stats past it report an error instead of hanging the turn. */
@@ -115,15 +118,18 @@ export function normalize(spec: StatSpec, rows: Record<string, unknown>[], colum
         const value = num(pick(r, "value", "count", "rate"));
         const n = num(pick(r, "n", "denominator"));
         if (label && value != null) {
-          // For a share, n is the denominator and value·n the numerator; without n the rule cannot be applied.
+          // For a share, n is the denominator and value·n the numerator. For a per-unit money figure
+          // (cost per payer by campaign) n is how many things the amount was spread over.
           const isShare = spec.unit === "percent";
-          const flagged = isShare && n != null ? smallN(Math.round(value * n), n) : undefined;
+          const perUnit = spec.unit === "usd" || spec.unit === "minutes" || spec.unit === "days";
+          const flagged = n == null ? undefined : isShare ? smallN(Math.round(value * n), n) : perUnit ? n < PER_UNIT_FLOOR : undefined;
           items.push({ label, value, ...(n == null ? {} : { n }), ...(flagged ? { smallN: true } : {}) });
         }
       }
       if (!items.length) return fail("A breakdown needs label and value columns.");
       const notes: string[] = [];
       if (spec.unit === "percent" && items.some((i) => i.n == null)) notes.push("Percent breakdown without an n column: the small-n rule cannot be applied, so these shares are unverified. Add n (the denominator) to the query.");
+      if ((spec.unit === "usd" || spec.unit === "minutes" || spec.unit === "days") && items.some((i) => i.n == null)) notes.push("Per-unit breakdown without an n column: there is no way to tell which rows rest on too few things to quote. Return n (how many the amount was spread over) alongside the value.");
       if (rows.length > MAX_ITEMS) notes.push(`Only the first ${MAX_ITEMS} of ${rows.length} rows are shown.`);
       return { ...base, items: items.slice(0, MAX_ITEMS), notes: notes.length ? notes : undefined };
     }

@@ -169,6 +169,10 @@ async function applyScoreboardOps(args: Record<string, unknown>, ctx: ToolContex
       if (needsSql && !String(op.sql ?? "").trim()) { warnings.push(`add skipped: "${title.slice(0, 40)}" has no sql`); continue; }
       if (k === "ads" && !(op.ads && typeof op.ads === "object" && (op.ads as { measure?: string }).measure)) { warnings.push(`add skipped: "${title.slice(0, 40)}" is an ads stat with no ads.measure`); continue; }
       if (k === "ads" && !ctx.req.ads?.rows.length) { warnings.push(`add skipped: "${title.slice(0, 40)}" needs uploaded ad spend, and none has been uploaded`); continue; }
+      if (k === "ads" && (op.ads as { measure?: string })?.measure === "platform_conversions" && typeof op.metricId === "string" && ["cost_per_activated", "signups_by_referrer", "activated_any_day", "conversion_by_usage"].includes(op.metricId)) {
+        warnings.push(`add skipped: "${title.slice(0, 40)}" binds ${op.metricId} to the ad platform's own conversion count, which is its own attribution and not an outcome from the founder's data`);
+        continue;
+      }
       if (k === "derived") {
         const dv = op.derived as { numeratorStatId?: string; denominatorStatId?: string } | undefined;
         const known = (id?: string) => !!id && board.stats.some((s) => s.id === id);

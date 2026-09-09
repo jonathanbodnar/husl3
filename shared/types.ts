@@ -87,6 +87,9 @@ export interface AdDataset {
   firstDay: string;
   lastDay: string;
   totalSpend: number;
+  /** "day" when each row is one calendar day; "range" when a row covers a week, a month, or the whole
+   *  report — a range must never be charted as a daily trend. */
+  grain: "day" | "range";
   /** What the parser could not use, so nothing is silently dropped. */
   notes: string[];
 }

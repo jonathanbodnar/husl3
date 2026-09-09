@@ -128,6 +128,11 @@ function StatTile({ spec, result, brainIndex }: { spec: StatSpec; result?: StatR
               ? <><span className="statv">{fmtInt(result.numerator)}<span className="of"> of {fmtInt(result.denominator ?? 0)}</span></span><div className="muted small">too few to quote as a share</div></>
               : <><span className="statv">{pct(result.value ?? 0)}</span><div className="muted small">{fmtInt(result.numerator)} of {fmtInt(result.denominator ?? 0)}</div></>}
           </div>
+        ) : result.smallN && result.n != null ? (
+          <div className="tvalue">
+            <span className="statv">{fmtValue((result.value ?? 0) * result.n, spec.unit)}<span className="of"> over {fmtInt(result.n)}</span></span>
+            <div className="muted small">too few to quote a per-unit figure</div>
+          </div>
         ) : (
           <div className="tvalue"><span className="statv">{fmtValue(result.value ?? 0, spec.unit)}</span>{result.n != null && <div className="muted small">n = {fmtInt(result.n)}</div>}</div>
         )}
@@ -200,12 +205,18 @@ function Funnel({ steps }: { steps: { step: string; count: number; fromPrev?: nu
 
 function Breakdown({ items, unit }: { items: { label: string; value: number; n?: number; smallN?: boolean }[]; unit: StatSpec["unit"] }) {
   const max = Math.max(...items.map((i) => i.value), 1e-9);
-  const shown = (it: { value: number; n?: number; smallN?: boolean }) => (it.smallN ? `${fmtInt(Math.round(it.value * (it.n ?? 0)))} of ${fmtInt(it.n ?? 0)}` : fmtValue(it.value, unit));
+  // A flagged SHARE shows its two counts; a flagged per-unit amount shows the total and what it was
+  // spread over, because "860 of 2" is nonsense for money.
+  const perUnit = unit === "usd" || unit === "minutes" || unit === "days";
+  const shown = (it: { value: number; n?: number; smallN?: boolean }) =>
+    !it.smallN ? fmtValue(it.value, unit)
+      : perUnit ? `${fmtValue(it.value * (it.n ?? 0), unit)} over ${fmtInt(it.n ?? 0)}`
+      : `${fmtInt(Math.round(it.value * (it.n ?? 0)))} of ${fmtInt(it.n ?? 0)}`;
   return (
     <div className="bars">
       {items.map((it, i) => (
         <div className="bar" key={i} title={`${it.label}: ${shown(it)}${it.n != null && !it.smallN ? ` (n=${fmtInt(it.n)})` : ""}`}>
-          <div className="blabel"><span>{it.label}</span>{it.n != null && !it.smallN && <span className="muted small"> n={fmtInt(it.n)}</span>}{it.smallN && <span className="muted small"> too few to quote a share</span>}</div>
+          <div className="blabel"><span>{it.label}</span>{it.n != null && !it.smallN && <span className="muted small"> n={fmtInt(it.n)}</span>}{it.smallN && <span className="muted small"> {perUnit ? "too few to quote a per-unit figure" : "too few to quote a share"}</span>}</div>
           <div className="btrack"><div className="bfill" style={{ width: `${Math.max(2, (it.value / max) * 100)}%` }} /><span className="bval mono">{shown(it)}</span></div>
         </div>
       ))}

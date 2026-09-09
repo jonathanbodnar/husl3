@@ -37,10 +37,14 @@ export function runAdStat(spec: StatSpec, ads: AdDataset | null | undefined, com
   const notes: string[] = [];
   const covered = { from: rows[0].day, to: rows[0].day };
   for (const r of rows) { if (r.day < covered.from) covered.from = r.day; if (r.day > covered.to) covered.to = r.day; }
-  notes.push(`From the uploaded ${ads.platforms.join(" + ")} export covering ${covered.from} to ${covered.to}${ads.currency ? ` in ${ads.currency}` : ""}.`);
+  notes.push(`From the uploaded ${ads.platforms.join(" + ")} export covering ${covered.from} to ${covered.to}${ads.currency ? ` in ${ads.currency}` : ""}${ads.grain === "range" ? ", where each row covers a range rather than one day" : ""}.`);
+  if (!ads.currency && q.measure === "spend") notes.push("The export names no single currency, so this amount carries no currency; do not compare it with a figure in one.");
   if (q.measure === "platform_conversions") notes.push("Platform-reported conversions are the ad platform's own attribution, not the founder's data; never treat them as signups or payers.");
 
   const sum = (f: (r: AdRow) => number) => rows.reduce((a, r) => a + f(r), 0);
+  if (q.groupBy === "day" && ads.grain === "range") {
+    return fail("This export's rows each cover a date range, not a single day, so it cannot produce a daily series. Re-export with the day breakdown (Meta: Breakdown → Time → By Day; Google Ads: Segment → Time → Day).");
+  }
   if (!q.groupBy) return { ...base, value: round2(sum((r) => measureOf(r, q.measure))), n: rows.length, notes };
 
   const by = new Map<string, number>();
@@ -75,9 +79,12 @@ export function runDerivedStat(spec: StatSpec, results: Record<string, StatResul
   if (den.value === 0) return fail(`${denSpec.title} is zero, so the ratio is undefined. Say so rather than showing a number.`);
 
   const notes = [`${numSpec.title} ÷ ${denSpec.title}: ${num.value} ÷ ${den.value}. Both are on this board and can be checked separately.`];
-  // The denominator is a count of real things; the brain's floor applies to it as much as to a rate.
-  const smallN = den.value < 5;
-  if (smallN) notes.push(`Only ${den.value} in the denominator: too few to quote this as a reliable per-unit figure.`);
+  // "Below 10 show counts": at three payers one more moves a cost-per-payer figure by a quarter.
+  const smallN = den.value < 10;
+  if (smallN) notes.push(`Only ${den.value} in the denominator: too few to quote as a per-unit figure. Give the two counts instead — ${num.value} over ${den.value}.`);
+  if (denSpec.kind === "ads" && denSpec.ads?.measure === "platform_conversions") {
+    return fail("The denominator is the ad platform's own conversion count, which is its own attribution and is not a signup, an activation or a payer. Divide by an outcome from the founder's database instead.");
+  }
   // A spend total that does not cover the same period as the outcome makes the ratio meaningless; say when we cannot tell.
   if (numSpec.kind === "ads" && denSpec.kind !== "ads" && !numSpec.ads?.since) notes.push("The spend covers the whole uploaded export while the denominator may cover a different period; match the ranges before trusting the ratio.");
   return { ...base, value: round2(num.value / den.value), n: den.value, smallN, notes };
