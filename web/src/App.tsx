@@ -25,6 +25,10 @@ export function App() {
   }, [health]);
 
   const current = useMemo(() => sessions.find((s) => s.id === currentId) ?? null, [sessions, currentId]);
+  const projects = useMemo(
+    () => sessions.map((s) => ({ id: s.id, label: s.label, updatedAt: s.updatedAt, hasDb: !!s.schema, hasRepo: !!s.repo, todos: s.todos.filter((t) => t.status !== "dismissed").length })),
+    [sessions],
+  );
 
   const update = useCallback((id: string, patch: Partial<AuditSession> | ((s: AuditSession) => AuditSession)) => {
     setSessions((prev) => prev.map((s) => (s.id !== id ? s : typeof patch === "function" ? patch(s) : { ...s, ...patch, updatedAt: new Date().toISOString() })));
@@ -81,6 +85,9 @@ export function App() {
       brainIndex={brainIndex}
       onUpdate={(patch) => update(current.id, patch)}
       onExit={() => setCurrentId(null)}
+      projects={projects}
+      onSwitch={(id) => setCurrentId(id)}
+      onNewProject={() => setCurrentId(null)}
       storageWarning={storageWarning}
     />
   );

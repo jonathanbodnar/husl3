@@ -41,6 +41,10 @@ export function Workspace(props: {
   brainIndex: BrainIndex | null;
   onUpdate: (patch: Partial<AuditSession> | ((s: AuditSession) => AuditSession)) => void;
   onExit: () => void;
+  /** Every audit in this browser, newest first, for the switcher. */
+  projects: { id: string; label: string; updatedAt: string; hasDb: boolean; hasRepo: boolean; todos: number }[];
+  onSwitch: (id: string) => void;
+  onNewProject: () => void;
   storageWarning?: string | null;
 }) {
   const { session: s } = props;
@@ -66,6 +70,7 @@ export function Workspace(props: {
   const [showPanel, setShowPanel] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const [tab, setTab] = useState<"todo" | "scoreboard">("todo");
+  const [projectsOpen, setProjectsOpen] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [connectDismissed, setConnectDismissed] = useState(false);
   const [pendingOAuth, setPendingOAuth] = useState<{ provider: "github" | "supabase"; promise: Promise<OAuthRelay> } | null>(null);
@@ -198,6 +203,8 @@ export function Workspace(props: {
   }, [s.transcript.length, props.health, chatConfigured, send]);
 
   const stop = () => abortRef.current?.abort();
+  /** Leaving this audit stops its turn: the answer would land in a session nobody is looking at, and it bills. */
+  const leaveTo = useCallback((go: () => void) => { abortRef.current?.abort(); setProjectsOpen(false); go(); }, []);
 
   const craft = useCallback(async (ids?: string[]) => {
     const cur = latest.current;
@@ -285,8 +292,46 @@ export function Workspace(props: {
   return (
     <div className="ws">
       <header className="topbar">
-        <button className="btn ghost sm brand" onClick={props.onExit} title="Back to start"><span className="mark" /> <span className="word">Vibe Distribution</span></button>
-        <span className="site">{s.site ? <img src={`https://www.google.com/s2/favicons?domain=${s.site.domain}&sz=32`} alt="" width={16} height={16} /> : <span aria-hidden>⎇</span>} {s.label}</span>
+        <button className="btn ghost sm brand" onClick={() => leaveTo(props.onExit)} title="Back to start"><span className="mark" /> <span className="word">Vibe Distribution</span></button>
+        <div className="projects">
+          <button
+            className="projbtn"
+            aria-haspopup="menu"
+            aria-expanded={projectsOpen}
+            title={`${s.label} — switch project`}
+            onClick={() => setProjectsOpen((o) => !o)}
+          >
+            {s.site ? <img src={`https://www.google.com/s2/favicons?domain=${s.site.domain}&sz=32`} alt="" width={16} height={16} /> : <span aria-hidden>⎇</span>}
+            <span className="plabel">{s.label}</span>
+            <span className="caret" aria-hidden>▾</span>
+          </button>
+          <button className="addproj" title="Add another project — a different site, with its own connections" aria-label="Add another project" onClick={() => leaveTo(props.onNewProject)}>+</button>
+          {projectsOpen && (
+            <>
+              <div className="menuscrim" onClick={() => setProjectsOpen(false)} />
+              <div className="projmenu" role="menu">
+                <div className="mtitle">Projects in this browser</div>
+                {props.projects.map((p) => (
+                  <button
+                    key={p.id}
+                    role="menuitem"
+                    className={`pitem${p.id === s.id ? " on" : ""}`}
+                    onClick={() => (p.id === s.id ? setProjectsOpen(false) : leaveTo(() => props.onSwitch(p.id)))}
+                  >
+                    <span className="pname">{p.label}</span>
+                    <span className="pmeta">
+                      {p.hasDb && <span className="chip on"><span className="dot" /> data</span>}
+                      {p.hasRepo && <span className="chip on"><span className="dot" /> code</span>}
+                      <span className="muted small">{p.todos} to-do{p.todos === 1 ? "" : "s"}</span>
+                    </span>
+                  </button>
+                ))}
+                <button role="menuitem" className="pitem newp" onClick={() => leaveTo(props.onNewProject)}>+ New project</button>
+                <div className="mnote">Each project keeps its own site, database and repository. Connections are never shared between them.</div>
+              </div>
+            </>
+          )}
+        </div>
         <span className="spacer" />
         <div className="conns">
           <span className={`chip clickable ${secrets.postgres ? "on" : s.schema ? "stale" : ""}`} onClick={() => openConnect("supabase")} title={secrets.postgres?.supabase ? `Supabase · ${secrets.postgres.supabase.projectName ?? secrets.postgres.supabase.projectRef}` : secrets.postgres ? "Database connected" : s.schema ? "Database schema known; reconnect to run queries" : props.health?.oauth.supabase ? "Sign in with Supabase" : "Connect your database"}><span className="dot" /> {secrets.postgres?.supabase || (!secrets.postgres && props.health?.oauth.supabase) ? "Supabase" : "Database"}</span>
