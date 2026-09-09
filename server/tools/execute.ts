@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
-import type { ChatRequest, Scoreboard, ScoreboardEval, StageId, StatKind, StatSpec, StatUnit, Todo, ToolUi } from "../../shared/types.js";
+import type { AdDataset, ChatRequest, Scoreboard, ScoreboardEval, StageId, StatKind, StatSpec, StatUnit, Todo, ToolUi } from "../../shared/types.js";
+import { runAdStat } from "../stats/ads.js";
 import { evaluateScoreboard } from "../stats/readiness.js";
 import { runScoreboard } from "../stats/run.js";
 import { brainIndex, stageIds } from "../brain/render.js";
@@ -23,6 +24,7 @@ export async function executeTool(name: string, args: Record<string, unknown>, c
     switch (name) {
       case "update_todos": return applyTodoOps(args, ctx);
       case "update_scoreboard": return await applyScoreboardOps(args, ctx);
+      case "read_ad_spend": return readAdSpend(args, ctx);
       case "fetch_page": return await fetchPage(args, ctx);
       case "run_sql": return await runSql(args, ctx, t0);
       case "db_describe_table": return describeTable(args, ctx);
@@ -109,7 +111,30 @@ function applyTodoOps(args: Record<string, unknown>, ctx: ToolContext): ToolOutc
   };
 }
 
-const KINDS: StatKind[] = ["number", "rate", "series", "funnel", "breakdown", "assert"];
+const KINDS: StatKind[] = ["number", "rate", "series", "funnel", "breakdown", "assert", "ads", "derived"];
+
+function readAdSpend(args: Record<string, unknown>, ctx: ToolContext): ToolOutcome {
+  const ads: AdDataset | null | undefined = ctx.req.ads;
+  if (!ads || !ads.rows.length) throw new Error("No ad spend has been uploaded. Ask the founder to export a campaign report from their ad platform and drop it in under Connect → Ad spend.");
+  const groupBy = String(args.groupBy ?? "campaign");
+  const measure = (["spend", "impressions", "clicks", "platform_conversions"].includes(String(args.measure)) ? String(args.measure) : "spend") as NonNullable<StatSpec["ads"]>["measure"];
+  const probe: StatSpec = {
+    id: "probe", title: "ad spend", kind: "ads", unit: measure === "spend" ? "usd" : "count", why: "", order: 0, createdAt: "", updatedAt: "",
+    ads: { measure, groupBy: groupBy === "none" ? undefined : (groupBy as "campaign" | "platform" | "day"), since: str(args.since), until: str(args.until), platform: str(args.platform) },
+  };
+  const r = runAdStat(probe, ads, new Date().toISOString());
+  if (!r.ok) throw new Error(r.error ?? "Could not read the uploaded ad spend");
+  // Carry the campaign id where the export had one: renaming a campaign breaks a join on the name.
+  const ids = new Map<string, string>();
+  for (const row of ads.rows) if (row.campaignId) ids.set(row.campaign, row.campaignId);
+  const body = r.items
+    ? { by: groupBy, items: r.items.map((i) => `${i.label}${ids.get(i.label) ? ` [id ${ids.get(i.label)}]` : ""}: ${i.value}`) }
+    : r.points ? { by: "day", points: r.points } : { total: r.value, rows: r.n };
+  return {
+    content: modelJson({ measure, currency: ads.currency, covering: `${ads.firstDay}…${ads.lastDay}`, platforms: ads.platforms, source: ads.source, ...body, notes: [...(r.notes ?? []), ...ads.notes] }),
+    ui: { name: "read_ad_spend", ok: true, summary: `${measure} by ${groupBy} · ${ads.platforms.join(", ")} · ${ads.firstDay}…${ads.lastDay}` },
+  };
+}
 const UNITS: StatUnit[] = ["percent", "count", "usd", "minutes", "days", "score"];
 const MAX_STATS = 12;
 
@@ -140,13 +165,25 @@ async function applyScoreboardOps(args: Record<string, unknown>, ctx: ToolContex
       const title = String(op.title ?? "").trim();
       const k = KINDS.includes(op.kind as StatKind) ? (op.kind as StatKind) : undefined;
       if (!title || !k) { warnings.push(`add skipped: title and a valid kind are required (${title.slice(0, 40) || "untitled"})`); continue; }
-      if (k !== "assert" && !String(op.sql ?? "").trim()) { warnings.push(`add skipped: "${title.slice(0, 40)}" has no sql`); continue; }
+      const needsSql = k !== "assert" && k !== "ads" && k !== "derived";
+      if (needsSql && !String(op.sql ?? "").trim()) { warnings.push(`add skipped: "${title.slice(0, 40)}" has no sql`); continue; }
+      if (k === "ads" && !(op.ads && typeof op.ads === "object" && (op.ads as { measure?: string }).measure)) { warnings.push(`add skipped: "${title.slice(0, 40)}" is an ads stat with no ads.measure`); continue; }
+      if (k === "ads" && !ctx.req.ads?.rows.length) { warnings.push(`add skipped: "${title.slice(0, 40)}" needs uploaded ad spend, and none has been uploaded`); continue; }
+      if (k === "derived") {
+        const dv = op.derived as { numeratorStatId?: string; denominatorStatId?: string } | undefined;
+        const known = (id?: string) => !!id && board.stats.some((s) => s.id === id);
+        if (!dv || !known(dv.numeratorStatId) || !known(dv.denominatorStatId)) { warnings.push(`add skipped: "${title.slice(0, 40)}" is derived but does not reference two existing stat ids (add them first, in an earlier op or an earlier call)`); continue; }
+        if (dv.numeratorStatId === dv.denominatorStatId) { warnings.push(`add skipped: "${title.slice(0, 40)}" divides a stat by itself`); continue; }
+      }
       if (board.stats.length >= MAX_STATS) { warnings.push(`add skipped: the scoreboard holds ${MAX_STATS} stats; remove one first`); continue; }
       if (typeof op.metricId === "string" && !validMetric(op.metricId)) warnings.push(`unknown metricId dropped on "${title.slice(0, 40)}": ${op.metricId}`);
       const spec: StatSpec = {
         id: `st-${randomBytes(3).toString("hex")}`, title: title.slice(0, 90), kind: k,
         unit: UNITS.includes(op.unit as StatUnit) ? (op.unit as StatUnit) : k === "rate" ? "percent" : "count",
-        sql: k === "assert" ? undefined : String(op.sql).trim(), metricId: validMetric(op.metricId), field: typeof op.field === "string" ? op.field.trim() : undefined,
+        sql: needsSql ? String(op.sql).trim() : undefined,
+        ads: k === "ads" ? (op.ads as StatSpec["ads"]) : undefined,
+        derived: k === "derived" ? { ...(op.derived as { numeratorStatId: string; denominatorStatId: string }), op: "divide" as const } : undefined,
+        metricId: validMetric(op.metricId), field: typeof op.field === "string" ? op.field.trim() : undefined,
         why: String(op.why ?? "").trim().slice(0, 600), caveat: typeof op.caveat === "string" ? op.caveat.trim().slice(0, 300) : undefined,
         stage: typeof op.stage === "string" && stageIds.includes(op.stage) ? (op.stage as StageId) : undefined,
         order: Math.max(0, ...board.stats.map((s) => s.order)) + 1,
@@ -161,6 +198,8 @@ async function applyScoreboardOps(args: Record<string, unknown>, ctx: ToolContex
       if (KINDS.includes(op.kind as StatKind) && op.kind !== s.kind) { s.kind = op.kind as StatKind; if (typeof op.sql !== "string" || !op.sql.trim()) warnings.push(`${s.id}: kind changed to ${s.kind} but the SQL was not; check it returns that kind's columns`); }
       if (UNITS.includes(op.unit as StatUnit)) s.unit = op.unit as StatUnit;
       if (typeof op.sql === "string" && op.sql.trim()) s.sql = op.sql.trim();
+      if (op.ads && typeof op.ads === "object") s.ads = { ...s.ads, ...(op.ads as StatSpec["ads"]) } as StatSpec["ads"];
+      if (op.derived && typeof op.derived === "object") s.derived = { ...(op.derived as { numeratorStatId: string; denominatorStatId: string }), op: "divide" };
       if (typeof op.metricId === "string") { const m = validMetric(op.metricId); if (m) s.metricId = m; else warnings.push(`unknown metricId ignored: ${op.metricId}`); }
       if (typeof op.field === "string") s.field = op.field.trim() || undefined;
       if (typeof op.why === "string" && op.why.trim()) s.why = op.why.trim().slice(0, 600);
@@ -182,10 +221,13 @@ async function applyScoreboardOps(args: Record<string, unknown>, ctx: ToolContex
   }
   // Run what changed (and anything never run), on one connection. A timezone change moves every day
   // boundary, so everything is re-run then.
-  const toRun = timezoneChanged ? board.stats.map((s) => s.id) : board.stats.filter((s) => touched.includes(s.id) || !board.results[s.id]).map((s) => s.id);
+  const dirty = new Set(timezoneChanged ? board.stats.map((s) => s.id) : board.stats.filter((s) => touched.includes(s.id) || !board.results[s.id]).map((s) => s.id));
+  // A derived stat is stale the moment either input is re-run.
+  for (const s of board.stats) if (s.kind === "derived" && s.derived && (dirty.has(s.derived.numeratorStatId) || dirty.has(s.derived.denominatorStatId))) dirty.add(s.id);
+  const toRun = [...dirty];
   if (toRun.length) {
     try {
-      const fresh = await runScoreboard(ctx.req.connections?.postgres, board, toRun);
+      const fresh = await runScoreboard(ctx.req.connections?.postgres, board, toRun, ctx.req.ads);
       Object.assign(board.results, fresh);
     } catch (e) {
       // The specs are kept; the failure is recorded on each stat so the founder can refresh once the database answers.

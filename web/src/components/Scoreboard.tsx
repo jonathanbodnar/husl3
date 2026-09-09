@@ -107,20 +107,22 @@ function ReadinessLine({ row, spec }: { row: ReadinessRow; spec?: StatSpec }) {
 function StatTile({ spec, result, brainIndex }: { spec: StatSpec; result?: StatResult; brainIndex: BrainIndex | null }) {
   const [open, setOpen] = useState(false);
   const metricLine = spec.metricId ? brainIndex?.evidence[spec.metricId] : undefined;
-  const wide = spec.kind === "series" || spec.kind === "funnel" || spec.kind === "breakdown";
+  const wide = !!(result?.points || result?.steps || result?.items) || spec.kind === "series" || spec.kind === "funnel" || spec.kind === "breakdown";
   return (
     <div className={`tile${wide ? " wide" : ""}${result && !result.ok ? " err" : ""}`}>
       <div className="tlabel">
         <span>{spec.title}</span>
         {spec.kind === "assert" && <span className="chip" title={spec.source ?? "stated by you"}>stated</span>}
+        {spec.kind === "ads" && <span className="chip" title="From the ad platform export you uploaded">ads</span>}
+        {spec.kind === "derived" && <span className="chip" title="Computed from two other stats on this board">derived</span>}
         {spec.metricId && <span className="ev" title={metricLine ?? spec.metricId}>{spec.metricId}{spec.field ? `.${spec.field}` : ""}</span>}
       </div>
       {!result ? <div className="muted small">not run yet</div>
         : !result.ok ? <div className="terr">{result.error}</div>
-        : spec.kind === "series" && result.points ? <Series points={result.points} unit={spec.unit} droppedToday={!!result.droppedToday} />
-        : spec.kind === "funnel" && result.steps ? <Funnel steps={result.steps} />
-        : spec.kind === "breakdown" && result.items ? <Breakdown items={result.items} unit={spec.unit} />
-        : spec.kind === "rate" && result.numerator != null ? (
+        : result.points ? <Series points={result.points} unit={spec.unit} droppedToday={!!result.droppedToday} />
+        : result.steps ? <Funnel steps={result.steps} />
+        : result.items ? <Breakdown items={result.items} unit={spec.unit} />
+        : result.numerator != null ? (
           <div className="tvalue">
             {result.smallN
               ? <><span className="statv">{fmtInt(result.numerator)}<span className="of"> of {fmtInt(result.denominator ?? 0)}</span></span><div className="muted small">too few to quote as a share</div></>

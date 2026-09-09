@@ -56,6 +56,7 @@ function productContext(req: PromptsRequest): string {
     });
     L.push(`Scoreboard (the founder's own numbers${sb.goal ? `; money event: ${sb.goal}` : ""}${sb.activation ? `; activation: ${sb.activation}` : ""}; reporting timezone ${sb.timezone ?? "not set"}):\n${lines.join("\n")}`);
   }
+  if (req.ads?.rows.length) L.push(`Ad spend (uploaded export, ${req.ads.platforms.join(" + ")}, ${req.ads.firstDay}…${req.ads.lastDay}): ${req.ads.totalSpend} ${req.ads.currency} across ${new Set(req.ads.rows.map((r) => r.campaign)).size} campaigns. Not a live connection.`);
   if (req.schema) L.push(`Database (read-only summary):\n${cap(req.schema.summary, 3500)}`);
   else L.push("Database: not connected (the agent must not assume table names).");
   return L.join("\n");

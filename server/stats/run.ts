@@ -1,5 +1,6 @@
-import type { PostgresConnection, Scoreboard, StatResult, StatSpec } from "../../shared/types.js";
+import type { AdDataset, PostgresConnection, Scoreboard, StatResult, StatSpec } from "../../shared/types.js";
 import { runReadOnlyBatch } from "../db/postgres.js";
+import { runAdStat, runDerivedStat } from "./ads.js";
 
 /**
  * Runs every stat on the scoreboard through the read-only gate and normalizes the rows into the shape
@@ -128,20 +129,29 @@ export function normalize(spec: StatSpec, rows: Record<string, unknown>[], colum
     }
     case "assert":
       return spec.value == null ? fail("An assert stat needs a value.") : { ...base, value: spec.value };
+    default:
+      // ads and derived never reach here: they are computed in runScoreboard, which has the dataset
+      // and the other stats' results.
+      return fail(`${spec.kind} stats are not computed from SQL rows.`);
   }
 }
 
-export async function runScoreboard(conn: PostgresConnection | undefined, board: Scoreboard, only?: string[]): Promise<Record<string, StatResult>> {
+export async function runScoreboard(conn: PostgresConnection | undefined, board: Scoreboard, only?: string[], ads?: AdDataset | null): Promise<Record<string, StatResult>> {
   const computedAt = new Date().toISOString();
   const results: Record<string, StatResult> = {};
   const targets = board.stats.filter((s) => !only || only.includes(s.id));
   for (const s of targets) if (s.kind === "assert") results[s.id] = normalize(s, [], [], board.timezone, computedAt, 0);
-  const sqlStats = targets.filter((s) => s.kind !== "assert");
-  if (!sqlStats.length) return results;
-  if (!conn) {
+  for (const s of targets) if (s.kind === "ads") results[s.id] = runAdStat(s, ads, computedAt);
+  const sqlStats = targets.filter((s) => s.kind !== "assert" && s.kind !== "ads" && s.kind !== "derived");
+  if (!conn && sqlStats.length) {
     for (const s of sqlStats) results[s.id] = { specId: s.id, ok: false, computedAt, error: "No database is connected" };
-    return results;
   }
+  // Derived stats divide two others, so they run last and may reference a stat that was not re-run.
+  const finishDerived = () => {
+    for (const s of targets) if (s.kind === "derived") results[s.id] = runDerivedStat(s, { ...board.results, ...results }, board.stats, computedAt);
+    return results;
+  };
+  if (!sqlStats.length || !conn) return finishDerived();
   const t0 = Date.now();
   // The SQL-level limit keeps the FIRST rows; a series is ascending, so a tight limit would keep the oldest days.
   const batch = await runReadOnlyBatch(conn, sqlStats.map((s) => ({ id: s.id, sql: s.sql ?? "", limit: s.kind === "series" ? 2000 : 200 })), TIME_BUDGET_MS);
@@ -154,5 +164,5 @@ export async function runScoreboard(conn: PostgresConnection | undefined, board:
     results[s.id] = res;
   }
   void t0;
-  return results;
+  return finishDerived();
 }

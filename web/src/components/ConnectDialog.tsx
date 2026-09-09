@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import type { Connections, DbSchema, GithubRepoItem, HealthResponse, OAuthRelay, RepoDigest, SupabaseLink, SupabaseProjectItem } from "../../../shared/types";
+import type { AdDataset, Connections, DbSchema, GithubRepoItem, HealthResponse, OAuthRelay, RepoDigest, SupabaseLink, SupabaseProjectItem } from "../../../shared/types";
 import { api } from "../api";
 import { consumePendingOAuth, startOAuth } from "../oauth";
 
@@ -11,6 +11,8 @@ export function ConnectDialog(props: {
   schema: DbSchema | null;
   repo: RepoDigest | null;
   remembered: boolean;
+  ads: AdDataset | null;
+  onAds: (ads: AdDataset | null) => void;
   /** A sign-in already started by the click that opened this dialog (keeps the popup inside the user gesture). */
   pending?: { provider: "github" | "supabase"; promise: Promise<OAuthRelay> } | null;
   onClose: () => void;
@@ -39,6 +41,21 @@ export function ConnectDialog(props: {
   const [pat, setPat] = useState(props.connections.github?.via === "pat" ? props.connections.github.token ?? "" : "");
   const [ghBusy, setGhBusy] = useState(false);
   const [ghMsg, setGhMsg] = useState<Msg>(props.repo ? { ok: true, text: describeRepo(props.repo) } : null);
+
+  // ── Ad spend (an export the founder downloads; no ad account is connected) ──
+  const [adBusy, setAdBusy] = useState(false);
+  const [adMsg, setAdMsg] = useState<Msg>(props.ads?.rows.length ? { ok: true, text: describeAds(props.ads) } : null);
+  const [pasted, setPasted] = useState("");
+  const ingest = async (text: string, source: string) => {
+    setAdBusy(true); setAdMsg(null);
+    try { const ds = await api.parseAds(text, source); setAdMsg({ ok: true, text: describeAds(ds) }); props.onAds(ds); }
+    catch (e) { setAdMsg({ ok: false, text: e instanceof Error ? e.message : String(e) }); } finally { setAdBusy(false); }
+  };
+  const onFile = async (file: File | undefined) => {
+    if (!file) return;
+    if (file.size > 5_000_000) { setAdMsg({ ok: false, text: "That file is larger than 5 MB; export a narrower date range." }); return; }
+    await ingest(await file.text(), file.name);
+  };
 
   // Popup-blocked fallback: a result may be waiting from a full-page redirect.
   useEffect(() => {
@@ -234,6 +251,35 @@ export function ConnectDialog(props: {
           </section>
 
           <section>
+            <h3>Ad spend</h3>
+            <p className="desc">If you buy traffic, the guide needs what you spent to work out what an activated user and a payer actually cost. There is no ad account to connect and no permission to grant: export a campaign report from your ad platform and drop the file here. Meta and Google both require an approved app for API access, which would put a review between you and your own numbers; your own export does not.</p>
+            <details className="howto">
+              <summary>How to export it</summary>
+              <ul>
+                <li><b>Meta (Facebook/Instagram):</b> Ads Manager → Campaigns. Set your date range, open <i>Breakdown</i> and pick <b>By Day</b> under Time, then <i>Columns → Customise columns</i> and tick Amount spent, Impressions, Link clicks and Campaign ID. Export → CSV.</li>
+                <li><b>Google Ads:</b> Campaigns. Set the date range, <i>Segment → Time → Day</i>, add the Campaign ID column, then the download icon → .csv.</li>
+                <li>The <b>campaign ID</b> is worth including: it survives a campaign being renamed, so spend can be matched to the accounts in your database that carry it.</li>
+                <li>Any platform works if the file has a cost column and a campaign or date column. The title and total rows these exports add are handled.</li>
+              </ul>
+            </details>
+            <div className="rowb">
+              <label className={`btn sm${adBusy ? " disabled" : ""}`} style={{ cursor: adBusy ? "default" : "pointer" }}>
+                {adBusy ? <><span className="spin" /> reading…</> : props.ads?.rows.length ? "Replace file" : "Choose a CSV file"}
+                <input type="file" accept=".csv,.tsv,.txt,text/csv,text/plain,text/tab-separated-values" style={{ display: "none" }} disabled={adBusy} onChange={(e) => { void onFile(e.target.files?.[0]); e.currentTarget.value = ""; }} />
+              </label>
+              {props.ads?.rows.length ? <button className="btn sm" onClick={() => { setAdMsg(null); props.onAds(null); }}>Remove</button> : null}
+            </div>
+            <details className="howto">
+              <summary>Or paste the rows</summary>
+              <textarea rows={4} placeholder={"Campaign,Day,Cost\nBrand,2026-08-01,123.45"} value={pasted} onChange={(e) => setPasted(e.target.value)} />
+              <div className="rowb"><button className="btn sm" disabled={adBusy || !pasted.trim()} onClick={() => void ingest(pasted, "pasted")}>Use pasted rows</button></div>
+            </details>
+            {adMsg && <div className={adMsg.ok ? "ok" : "bad"}>{adMsg.text}</div>}
+            {props.ads?.notes.length ? <div className="note">{props.ads.notes.join(" ")}</div> : null}
+            <div className="note">The file is parsed on the server and kept in this browser with the rest of the audit. It is a snapshot from the day you exported it, not a live feed — re-export when you want fresh numbers.</div>
+          </section>
+
+          <section>
             <label className="rowb remember" style={{ cursor: "pointer" }}>
               <input type="checkbox" checked={remember} onChange={(e) => { setRemember(e.target.checked); props.onRemember(e.target.checked); }} />
               <span>Remember these connections on this device (otherwise they are forgotten when this tab closes)</span>
@@ -248,6 +294,10 @@ export function ConnectDialog(props: {
 
 function describeSchema(s: DbSchema, projectName?: string): string {
   return `Connected${projectName ? ` to ${projectName}` : ""}: ${s.tables.length} tables${s.authUsers != null ? `, ${s.authUsers.toLocaleString()} accounts in auth.users` : ""}`;
+}
+function describeAds(a: AdDataset): string {
+  const campaigns = new Set(a.rows.map((r) => r.campaign)).size;
+  return `Read ${a.rows.length} campaign-day rows: ${a.totalSpend.toLocaleString("en-US", { maximumFractionDigits: 0 })} ${a.currency} across ${campaigns} campaign${campaigns === 1 ? "" : "s"}, ${a.firstDay} to ${a.lastDay} (${a.platforms.join(", ")})`;
 }
 function describeRepo(r: RepoDigest): string {
   return `Connected: ${r.repo} · ${r.fileCount.toLocaleString()} files · ${r.recentCommits.length} recent commits${r.stack.length ? ` · ${r.stack.slice(0, 5).join(", ")}` : ""}`;

@@ -124,6 +124,7 @@ export function Workspace(props: {
       repo: cur.repo,
       todos: cur.todos,
       scoreboard: cur.scoreboard ?? null,
+      ads: cur.ads ?? null,
       transcript: cur.transcript,
       message: text,
       kickoff,
@@ -210,7 +211,7 @@ export function Workspace(props: {
     const cur = latest.current;
     setCrafting(true);
     try {
-      const res = await api.prompts({ site: cur.site, schema: cur.schema, repo: cur.repo, todos: cur.todos, scoreboard: cur.scoreboard ?? null, transcript: cur.transcript, todoIds: ids });
+      const res = await api.prompts({ site: cur.site, schema: cur.schema, repo: cur.repo, todos: cur.todos, scoreboard: cur.scoreboard ?? null, ads: cur.ads ?? null, transcript: cur.transcript, todoIds: ids });
       const byId = new Map(res.prompts.map((p) => [p.todoId, p.prompt]));
       props.onUpdate((prev) => ({
         ...prev,
@@ -228,7 +229,7 @@ export function Workspace(props: {
     setRefreshing(true);
     try {
       const creds = await freshSecrets();
-      const r = await api.runStats(creds.postgres, cur.scoreboard);
+      const r = await api.runStats(creds.postgres, cur.scoreboard, undefined, cur.ads ?? null);
       props.onUpdate((prev) => {
         if (!prev.scoreboard) return prev;
         // Merge by id onto whatever specs exist now: a stat added meanwhile keeps its result, a removed one gains none.
@@ -248,6 +249,11 @@ export function Workspace(props: {
     props.onUpdate({ schema, links: { ...s.links, postgres: !!conn } });
     if (conn && schema) setTimeout(() => void send(`I connected my database (${schema.tables.length} tables${schema.authUsers != null ? `, ${schema.authUsers.toLocaleString()} accounts` : ""}). Build my scoreboard first: name the money event and activation for this product, bind the brain's recipes to my tables, run them, and place me by the numbers. Then re-read the current to-dos against what the data says.`), 50);
   };
+  const onAds = (ads: AuditSession["ads"]) => {
+    props.onUpdate({ ads });
+    if (ads?.rows.length) setTimeout(() => void send(`I uploaded my ad spend (${ads.platforms.join(" + ")}, ${ads.firstDay} to ${ads.lastDay}, ${ads.totalSpend} ${ads.currency}). Read it, then tell me what it costs to get an activated user and a payer, and whether my own data can attribute any of this spend to accounts.`), 50);
+  };
+
   const onRepo = (conn: Connections["github"] | null, digest: AuditSession["repo"], remember: boolean) => {
     const next: Connections = { ...secretsRef.current, github: conn ?? undefined };
     applySecrets(next, remember);
@@ -335,6 +341,7 @@ export function Workspace(props: {
         <span className="spacer" />
         <div className="conns">
           <span className={`chip clickable ${secrets.postgres ? "on" : s.schema ? "stale" : ""}`} onClick={() => openConnect("supabase")} title={secrets.postgres?.supabase ? `Supabase · ${secrets.postgres.supabase.projectName ?? secrets.postgres.supabase.projectRef}` : secrets.postgres ? "Database connected" : s.schema ? "Database schema known; reconnect to run queries" : props.health?.oauth.supabase ? "Sign in with Supabase" : "Connect your database"}><span className="dot" /> {secrets.postgres?.supabase || (!secrets.postgres && props.health?.oauth.supabase) ? "Supabase" : "Database"}</span>
+          <span className={`chip clickable ${s.ads?.rows.length ? "on" : ""}`} onClick={() => openConnect()} title={s.ads?.rows.length ? `${s.ads.totalSpend} ${s.ads.currency} uploaded · ${s.ads.firstDay}…${s.ads.lastDay}` : "Upload an ad platform export"}><span className="dot" /> Ads</span>
           <span className={`chip clickable ${secrets.github ? "on" : s.repo ? "stale" : ""}`} onClick={() => openConnect("github")} title={secrets.github ? `Repository ${secrets.github.repo}` : s.repo ? "Repository digest known; reconnect to read files" : props.health?.oauth.github ? "Sign in with GitHub" : "Connect your repository"}><span className="dot" /> GitHub</span>
         </div>
         <span className="cost" title={`${tokens.toLocaleString()} tokens this audit · ${tokens ? Math.round((hit / Math.max(1, tokens)) * 100) : 0}% served from the provider's cache · ${s.costs.length} model calls`}>${usd.toFixed(usd < 0.1 ? 3 : 2)}</span>
@@ -356,7 +363,7 @@ export function Workspace(props: {
         </aside>
       </div>
       {connectOpen && (
-        <ConnectDialog health={props.health} onRemember={(r) => applySecrets(secretsRef.current, r)} connections={secrets} schema={s.schema} repo={s.repo} remembered={store.isRemembered(s.id)} pending={pendingOAuth} onClose={() => { setConnectOpen(false); setPendingOAuth(null); }} onDb={onDb} onRepo={onRepo} />
+        <ConnectDialog health={props.health} ads={s.ads ?? null} onAds={onAds} onRemember={(r) => applySecrets(secretsRef.current, r)} connections={secrets} schema={s.schema} repo={s.repo} remembered={store.isRemembered(s.id)} pending={pendingOAuth} onClose={() => { setConnectOpen(false); setPendingOAuth(null); }} onDb={onDb} onRepo={onRepo} />
       )}
       {toast && <div className="toast">{toast}</div>}
     </div>

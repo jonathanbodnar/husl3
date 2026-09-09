@@ -1,4 +1,4 @@
-import type { ChatRequest, DbSchema, RepoDigest, Scoreboard, SiteDigest, Todo } from "../../shared/types.js";
+import type { AdDataset, ChatRequest, DbSchema, RepoDigest, Scoreboard, SiteDigest, Todo } from "../../shared/types.js";
 import { evaluateScoreboard } from "../stats/readiness.js";
 import { brainText, brainVersion } from "./render.js";
 
@@ -13,6 +13,7 @@ How you work
 - Use fetch_page to read more of their site when a question depends on it (pricing page, signup flow, docs).
 - The scoreboard is how the plan adapts to this founder. The brain supplies metric recipes and readiness checks; their data decides which apply and what they say. When a database is connected and the scoreboard is empty, build it BEFORE placing them and before adding to-dos: name the money event, the core request and the activation definition for this product; set the reporting timezone; then bind the recipes for the money event, activation and the current stage's instrument_now list to their real tables with update_scoreboard (4 to 12 stats). Results and errors come back at once; fix a failing stat in the same turn. Readiness is graded for you from the scoreboard and shown at the top of every turn as "stage by the numbers"; place the founder by it, and say which checks are unmeasured rather than guessing them. A number that can decide a question is measured before any advice is given on it; the brain's move comes second, as the thing the number points to.
 - When a repository is connected as well, the funnel comes from the code, not from guesses: read the files behind signup, onboarding, the core action, the limit or paywall, checkout and tracking; learn the real steps and the event names actually emitted; rebuild the funnel stat from those steps in path order, and say in each stat's why which file or event it is bound to. If the code fires no event for a step, say so: that is a to-do (instrumentation), not a number.
+- Ad spend arrives as the platform's own export, uploaded by the founder; there is no ad account connection and no platform API. Read it with read_ad_spend before saying anything about acquisition cost. Spend lives in that export and outcomes live in the database, so no single query holds both: build an ads stat for the spend, a database stat for the outcome, and a derived stat that divides them, with the same date range on each — an unmatched range makes the ratio meaningless and you must say so rather than quote it. The platform's own conversion counts are its marking of its own homework; never present them as signups, activations or payers, and when they disagree with the founder's database say which is which. To attribute spend to outcomes, read the campaign ids (or names, when the export carries no id — say that a rename would break that join) from the export and look for them in the founder's own attribution fields; when those fields are empty or absent, that is the finding (t-01), and instrumenting attribution is the to-do, not a number.
 - The founder can refresh the scoreboard at any time and can read every stat's SQL. Never present a stated value as a measured one, and never quote a share the small-n rule forbids; give the counts.
 - On the opening turn, when no database or repository is connected, close by saying plainly that the placement stays provisional until you can read their repository and their data, and point them to Connect in the top bar. Say it once; on later turns ask again only when a question depends on it. When only one of the two is connected, ask for the other the same way, once.
 - When the audit started from a repository and no public site could be read, say so, work from the code, and ask for the live URL if one exists.
@@ -65,6 +66,20 @@ export function renderRepo(repo: RepoDigest): string {
 const pct = (v: number) => `${(v * 100).toFixed(v * 100 < 10 ? 1 : 0)}%`;
 const fmtVal = (v: number, unit: string) => (unit === "percent" ? pct(v) : unit === "usd" ? `$${v.toFixed(2)}` : Number.isInteger(v) ? String(v) : v.toFixed(2));
 
+export function renderAds(ads: AdDataset | null | undefined): string {
+  if (!ads || !ads.rows.length) return "## Ad spend\n(none uploaded — if the founder buys traffic, ask for a campaign export from their ad platform: Connect → Ad spend)";
+  const byCampaign = new Map<string, number>();
+  for (const r of ads.rows) byCampaign.set(r.campaign, (byCampaign.get(r.campaign) ?? 0) + r.spend);
+  const top = [...byCampaign.entries()].sort((a, b) => b[1] - a[1]).slice(0, 10);
+  const L = [
+    `## Ad spend (uploaded from ${ads.source}; ${ads.platforms.join(" + ")}; ${ads.firstDay} to ${ads.lastDay}; ${ads.rows.length} campaign-days)`,
+    `Total ${ads.totalSpend}${ads.currency ? " " + ads.currency : ""}. This is the platform's own export, not a live connection: it is a snapshot as of upload.`,
+    `Spend by campaign (top ${top.length}${byCampaign.size > top.length ? ` of ${byCampaign.size}` : ""}): ${top.map(([c, v]) => `${c} ${Math.round(v)}`).join("; ")}`,
+  ];
+  for (const n of ads.notes) L.push(`Note: ${n}`);
+  return L.join("\n");
+}
+
 export function renderScoreboard(board: Scoreboard | null | undefined, dbConnected: boolean): string {
   if (!board || !board.stats.length) {
     return dbConnected
@@ -91,6 +106,7 @@ export function renderScoreboard(board: Scoreboard | null | undefined, dbConnect
     } else if (r.steps) L.push(`- ${tag} ${s.title} (funnel): ${r.steps.map((st, i) => `${st.step} ${st.count}${i > 0 ? (st.fromPrev != null ? ` (${pct(st.fromPrev)} of previous)` : " (too few to quote a share)") : ""}`).join(" → ")}`);
     else if (r.items) L.push(`- ${tag} ${s.title} (breakdown): ${r.items.map((i) => `${i.label} ${i.smallN ? `${Math.round(i.value * (i.n ?? 0))} of ${i.n} (too few to quote a share)` : fmtVal(i.value, s.unit)}${i.n != null && !i.smallN ? ` n=${i.n}` : ""}`).join("; ")}`);
     else if (r.numerator != null) L.push(`- ${tag} ${s.title}: ${r.numerator}/${r.denominator}${r.smallN ? " — small n: quote the counts, not a percentage" : ` = ${pct(r.value!)}`}`);
+    else if (s.kind === "derived" && s.derived) L.push(`- ${tag} ${s.title}: ${fmtVal(r.value ?? 0, s.unit)} (${board.stats.find((x) => x.id === s.derived!.numeratorStatId)?.title ?? s.derived.numeratorStatId} ÷ ${board.stats.find((x) => x.id === s.derived!.denominatorStatId)?.title ?? s.derived.denominatorStatId})${r.smallN ? " — too few in the denominator to quote per unit" : ""}`);
     else L.push(`- ${tag} ${s.title}: ${fmtVal(r.value ?? 0, s.unit)}${r.n != null ? ` (n=${r.n})` : ""}${s.kind === "assert" ? ` (STATED by the founder${s.source ? `: ${s.source}` : ""}, not measured)` : ""}`);
     if (s.caveat) L.push(`  caveat: ${s.caveat}`);
     for (const n of r.notes ?? []) L.push(`  note: ${n}`);
@@ -123,6 +139,7 @@ export function sessionSystem(req: ChatRequest): string {
   if (req.schema && (req.connections?.postgres?.connectionString || req.connections?.postgres?.supabase)) parts.push(renderSchema(req.schema));
   // The digest goes in whenever it exists: the repository tools are enabled from it too, so context and tools must agree.
   if (req.repo) parts.push(renderRepo(req.repo));
+  parts.push(renderAds(req.ads));
   parts.push(renderScoreboard(req.scoreboard, !!(req.connections?.postgres?.connectionString || req.connections?.postgres?.supabase)));
   parts.push(renderTodos(req.todos));
   return parts.join("\n\n");

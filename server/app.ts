@@ -11,6 +11,7 @@ import { DailyBudget } from "./cost.js";
 import { introspect, validateConnectionString } from "./db/postgres.js";
 import { env } from "./env.js";
 import { introspectRepo, listRepos, parseRepo } from "./github/client.js";
+import { parseAdExport } from "./ads/parse.js";
 import { evaluateScoreboard } from "./stats/readiness.js";
 import { runScoreboard } from "./stats/run.js";
 import { craftPrompts } from "./prompts/craft.js";
@@ -154,16 +155,25 @@ app.get("/api/supabase/projects", async (c) => {
   try { return c.json(await sbListProjects(token)); } catch (e) { return targetError(msg(e)); }
 });
 
+app.post("/api/ads/parse", async (c) => {
+  { const throttled = throttle("scan", ipOf(c), "requests"); if (throttled) return throttled; }
+  const b = await body<{ text?: string; source?: string; platform?: string }>(c);
+  if (typeof b?.text !== "string" || !b.text.trim()) return errJson("text is required", 400);
+  if (b.text.length > 5_000_000) return errJson("That export is too large; export a narrower date range.", 413);
+  try { return c.json(parseAdExport(b.text, { source: b.source, platform: b.platform })); }
+  catch (e) { return targetError(msg(e)); }
+});
+
 app.post("/api/stats/run", async (c) => {
   { const throttled = throttle("scan", ipOf(c), "requests"); if (throttled) return throttled; }
-  const b = await body<{ connection?: PostgresConnection; scoreboard?: { stats?: unknown[]; timezone?: string; results?: Record<string, unknown> }; only?: string[] }>(c);
+  const b = await body<{ connection?: PostgresConnection; scoreboard?: { stats?: unknown[]; timezone?: string; results?: Record<string, unknown> }; only?: string[]; ads?: import("../shared/types.js").AdDataset | null }>(c);
   if (!b?.scoreboard || !Array.isArray(b.scoreboard.stats)) return errJson("scoreboard.stats is required", 400);
   // Existing results are kept so a partial run (only=[…]) is graded on the whole board, not on the subset.
   const prior = (b.scoreboard.results && typeof b.scoreboard.results === "object" ? b.scoreboard.results : {}) as Record<string, import("../shared/types.js").StatResult>;
   const board = { ...(b.scoreboard as import("../shared/types.js").Scoreboard), results: { ...prior } };
   if (board.stats.length > 12) return errJson("At most 12 stats", 400);
   try {
-    const results = await runScoreboard(b.connection, board, Array.isArray(b.only) ? b.only.map(String) : undefined);
+    const results = await runScoreboard(b.connection, board, Array.isArray(b.only) ? b.only.map(String) : undefined, b.ads ?? null);
     const merged = { ...board, results: { ...board.results, ...results }, computedAt: new Date().toISOString() };
     return c.json({ results, computedAt: merged.computedAt, eval: evaluateScoreboard(merged) });
   } catch (e) { return targetError(`Could not run the scoreboard: ${redact(msg(e))}`); }

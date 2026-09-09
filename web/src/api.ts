@@ -1,4 +1,4 @@
-import type { ChatEvent, ChatRequest, DbSchema, GithubRepoItem, HealthResponse, PostgresConnection, PromptsRequest, PromptsResponse, RepoDigest, Scoreboard, ScoreboardEval, SiteDigest, StatResult, SupabaseProjectItem } from "../../shared/types";
+import type { AdDataset, ChatEvent, ChatRequest, DbSchema, GithubRepoItem, HealthResponse, PostgresConnection, PromptsRequest, PromptsResponse, RepoDigest, Scoreboard, ScoreboardEval, SiteDigest, StatResult, SupabaseProjectItem } from "../../shared/types";
 import { store } from "./state";
 
 export interface BrainIndex { version: string; stages: { id: string; name: string; goal: string }[]; principles: { id: string; key: string; title: string }[]; evidence: Record<string, string> }
@@ -31,7 +31,8 @@ export const api = {
   supabaseRefresh: (refreshToken: string) => post<{ accessToken: string; refreshToken?: string; expiresAt?: number }>("/api/auth/supabase/refresh", { refreshToken }),
   introspectRepo: (repo: string, token?: string) => post<RepoDigest>("/api/github/introspect", { repo, token }),
   prompts: (req: PromptsRequest) => post<PromptsResponse>("/api/prompts", req),
-  runStats: (connection: PostgresConnection | undefined, scoreboard: Scoreboard, only?: string[]) => post<{ results: Record<string, StatResult>; computedAt: string; eval: ScoreboardEval }>("/api/stats/run", { connection, scoreboard, only }),
+  runStats: (connection: PostgresConnection | undefined, scoreboard: Scoreboard, only?: string[], ads?: AdDataset | null) => post<{ results: Record<string, StatResult>; computedAt: string; eval: ScoreboardEval }>("/api/stats/run", { connection, scoreboard, only, ads }),
+  parseAds: (text: string, source?: string, platform?: string) => post<AdDataset>("/api/ads/parse", { text, source, platform }),
 
   async chat(req: ChatRequest, onEvent: (e: ChatEvent) => void, signal: AbortSignal): Promise<void> {
     const res = await fetch("/api/chat", { method: "POST", headers: headers(), body: JSON.stringify(req), signal });

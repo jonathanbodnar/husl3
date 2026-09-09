@@ -3,7 +3,7 @@ import { bindingCatalog } from "../stats/readiness.js";
 
 const STAGES = ["s0", "s1", "s2", "s3", "s4", "s5", "s6"];
 
-export function toolsFor(opts: { db: boolean; github: boolean }): Tool[] {
+export function toolsFor(opts: { db: boolean; github: boolean; ads: boolean }): Tool[] {
   const tools: Tool[] = [
     {
       type: "function",
@@ -46,6 +46,26 @@ export function toolsFor(opts: { db: boolean; github: boolean }): Tool[] {
       },
     },
   ];
+  if (opts.ads) {
+    tools.push({
+      type: "function",
+      function: {
+        name: "read_ad_spend",
+        description:
+          "Read the ad spend the founder uploaded from their ad platform's own export. Use it to learn what campaigns exist, what was spent and over what dates, before binding cost_per_activated or gross_ltv. The platform's own conversion counts are its own attribution — never treat them as signups or payers; the founder's database is the source for outcomes. To relate spend to outcomes, read the campaign names here, then query the founder's database for the accounts whose attribution fields match them.",
+        parameters: {
+          type: "object",
+          properties: {
+            groupBy: { type: "string", enum: ["campaign", "platform", "day", "none"], description: "Default campaign" },
+            measure: { type: "string", enum: ["spend", "impressions", "clicks", "platform_conversions"], description: "Default spend" },
+            since: { type: "string", description: "Inclusive YYYY-MM-DD" },
+            until: { type: "string", description: "Inclusive YYYY-MM-DD" },
+            platform: { type: "string" },
+          },
+        },
+      },
+    });
+  }
   if (opts.db) {
     tools.push({
       type: "function",
@@ -54,6 +74,8 @@ export function toolsFor(opts: { db: boolean; github: boolean }): Tool[] {
         description:
           `Build or change the founder's scoreboard: the brain's metric recipes bound to THEIR tables, run by the server, graded against the journey's readiness checks, and shown in a side panel. Set goal / activation / coreRequest and the IANA timezone the first time (the timezone is required: today is dropped and days are bucketed on it). Each stat has a kind with a strict SQL contract:
 number: one row with a numeric column "value" (optional "n"). Unit percent always means a 0–1 fraction (0.083, not 8.3), for every kind.
+ads: no SQL. Aggregates the founder's uploaded ad spend: set ads.measure (spend/impressions/clicks/platform_conversions) and optionally ads.groupBy (campaign → breakdown, platform → breakdown, day → series; omit for a total), ads.since/ads.until, ads.platform, ads.campaignContains.
+derived: no SQL. One stat divided by another: derived.numeratorStatId ÷ derived.denominatorStatId. This is how cost per payer and cost per activated user are built, because spend lives in the uploaded export and the outcome lives in the database, so no single query can hold both. Match the periods: give the ads stat the same since/until as the outcome query covers, or the ratio is meaningless.
 rate: one row with integer columns "numerator" and "denominator" (the server computes the share and applies the small-n rule).
 series: rows "day" (date) and "value", ascending, one per calendar day in the reporting timezone (the server drops today).
 funnel: rows "step" (text) and "count", one per step in path order, first step = the widest.
@@ -77,9 +99,32 @@ ${bindingCatalog()}`,
                   id: { type: "string", description: "Existing stat id (update / remove)" },
                   ids: { type: "array", items: { type: "string" }, description: "Full new order (reorder)" },
                   title: { type: "string" },
-                  kind: { type: "string", enum: ["number", "rate", "series", "funnel", "breakdown", "assert"] },
+                  kind: { type: "string", enum: ["number", "rate", "series", "funnel", "breakdown", "assert", "ads", "derived"] },
                   unit: { type: "string", enum: ["percent", "count", "usd", "minutes", "days", "score"] },
                   sql: { type: "string" },
+                  ads: {
+                    type: "object",
+                    description: "ads kind only",
+                    properties: {
+                      measure: { type: "string", enum: ["spend", "impressions", "clicks", "platform_conversions"] },
+                      groupBy: { type: "string", enum: ["campaign", "platform", "day"] },
+                      platform: { type: "string" },
+                      since: { type: "string" },
+                      until: { type: "string" },
+                      campaignContains: { type: "string" },
+                    },
+                    required: ["measure"],
+                  },
+                  derived: {
+                    type: "object",
+                    description: "derived kind only",
+                    properties: {
+                      numeratorStatId: { type: "string" },
+                      denominatorStatId: { type: "string" },
+                      op: { type: "string", enum: ["divide"] },
+                    },
+                    required: ["numeratorStatId", "denominatorStatId"],
+                  },
                   metricId: { type: "string" },
                   field: { type: "string" },
                   why: { type: "string", description: "Why this number matters for this product now, and what it is bound to (tables, events, files)" },

@@ -50,7 +50,7 @@ export async function runChatTurn(req: ChatRequest, emit: (e: ChatEvent) => void
     { role: "user", content: userText },
   ];
   // The repo digest alone enables the tools (public repositories read without a token); a token adds private access.
-  const tools = toolsFor({ db: hasDatabase(req.connections?.postgres), github: !!(req.connections?.github?.repo || req.repo?.repo) });
+  const tools = toolsFor({ db: hasDatabase(req.connections?.postgres), github: !!(req.connections?.github?.repo || req.repo?.repo), ads: !!req.ads?.rows.length });
   let usage = zeroUsage();
   let usd = 0;
   /** Text streamed in the round currently running, so a mid-stream failure does not erase what the user read. */

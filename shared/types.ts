@@ -59,6 +59,37 @@ export interface SiteDigest {
 export interface SupabaseLink { accessToken: string; refreshToken?: string; expiresAt?: number; projectRef: string; projectName?: string; orgName?: string }
 export interface PostgresConnection { connectionString?: string; supabase?: SupabaseLink }
 export interface GithubConnection { repo: string; token?: string; login?: string; via?: "oauth" | "pat" }
+
+// ── Ad spend ────────────────────────────────────────────────────────────────
+/** One campaign-day of spend, normalized from whatever the ad platform exported. */
+export interface AdRow {
+  platform: string;
+  campaign: string;
+  /** The platform's own campaign id when the export carries it: the durable key to utm_campaign / utm_id,
+   *  where a renamed campaign would break a join on the name. */
+  campaignId?: string;
+  /** YYYY-MM-DD in the platform's reporting timezone (the platform decides the day boundary, not us). */
+  day: string;
+  spend: number;
+  impressions?: number;
+  clicks?: number;
+  /** The platform's own conversion count. Never treated as a signup or a payer: it is the platform marking its own homework. */
+  platformConversions?: number;
+}
+export interface AdDataset {
+  rows: AdRow[];
+  currency: string;
+  /** How it arrived, for the audit trail: the file name, or "pasted". */
+  source: string;
+  uploadedAt: string;
+  /** Distinct platforms and the covered range, precomputed for display and for the model. */
+  platforms: string[];
+  firstDay: string;
+  lastDay: string;
+  totalSpend: number;
+  /** What the parser could not use, so nothing is silently dropped. */
+  notes: string[];
+}
 export interface GithubRepoItem { fullName: string; private: boolean; pushedAt?: string; description?: string; language?: string }
 export interface SupabaseProjectItem { ref: string; name: string; region?: string; status?: string; orgName?: string }
 export type OAuthRelay =
@@ -115,7 +146,7 @@ export interface RepoDigest {
  * breakdown rows: label (text), value (numeric), optional n
  * assert    no SQL: a value the founder stated in conversation (shown as stated, never as measured)
  */
-export type StatKind = "number" | "rate" | "series" | "funnel" | "breakdown" | "assert";
+export type StatKind = "number" | "rate" | "series" | "funnel" | "breakdown" | "assert" | "ads" | "derived";
 export type StatUnit = "percent" | "count" | "usd" | "minutes" | "days" | "score";
 
 export interface StatSpec {
@@ -123,8 +154,22 @@ export interface StatSpec {
   title: string;
   kind: StatKind;
   unit: StatUnit;
-  /** SQL following the kind's contract. Absent for assert. */
+  /** SQL following the kind's contract. Absent for assert, ads and derived. */
   sql?: string;
+  /** ads only: what to pull from the uploaded ad spend. */
+  ads?: {
+    measure: "spend" | "impressions" | "clicks" | "platform_conversions";
+    /** Omit for a single total (number); by campaign or platform gives a breakdown, by day a series. */
+    groupBy?: "campaign" | "platform" | "day";
+    platform?: string;
+    /** Inclusive YYYY-MM-DD bounds; omit for the whole uploaded range. */
+    since?: string;
+    until?: string;
+    /** Case-insensitive substring the campaign name must contain. */
+    campaignContains?: string;
+  };
+  /** derived only: a ratio of two other stats, e.g. spend ÷ payers. Both inputs stay visible on the board. */
+  derived?: { numeratorStatId: string; denominatorStatId: string; op: "divide" };
   /** Brain metric recipe this implements (metrics[].id), when it does. */
   metricId?: string;
   /** Readiness field this stat measures (journey[].readiness[].check.field), when it does. */
@@ -147,7 +192,7 @@ export interface StatResult {
   error?: string;
   computedAt: string;
   ms?: number;
-  /** number / rate / assert */
+  /** number / rate / assert / ads / derived */
   value?: number;
   n?: number;
   numerator?: number;
@@ -251,6 +296,7 @@ export interface ChatRequest {
   repo?: RepoDigest | null;
   todos: Todo[];
   scoreboard?: Scoreboard | null;
+  ads?: AdDataset | null;
   transcript: TranscriptMessage[];
   message: string;
   /** First turn after the scan: the server supplies the opening instruction. */
@@ -267,6 +313,7 @@ export interface PromptsRequest {
   repo?: RepoDigest | null;
   todos: Todo[];
   scoreboard?: Scoreboard | null;
+  ads?: AdDataset | null;
   transcript: TranscriptMessage[];
   /** Subset to (re)write; defaults to every active item without a fresh prompt. */
   todoIds?: string[];

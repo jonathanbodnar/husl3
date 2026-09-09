@@ -1,4 +1,4 @@
-import type { Connections, CostEvent, DbSchema, RepoDigest, Scoreboard, ScoreboardEval, SiteDigest, Todo, TranscriptMessage } from "../../shared/types";
+import type { AdDataset, Connections, CostEvent, DbSchema, RepoDigest, Scoreboard, ScoreboardEval, SiteDigest, Todo, TranscriptMessage } from "../../shared/types";
 
 export interface AuditSession {
   id: string;
@@ -14,6 +14,8 @@ export interface AuditSession {
   todos: Todo[];
   scoreboard?: Scoreboard | null;
   scoreboardEval?: ScoreboardEval | null;
+  /** Ad spend the founder uploaded from their platform's export. Not a live connection. */
+  ads?: AdDataset | null;
   transcript: TranscriptMessage[];
   costs: CostEvent[];
 }
