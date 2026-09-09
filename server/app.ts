@@ -47,6 +47,21 @@ async function body<T>(c: { req: { header: (k: string) => string | undefined; js
 }
 
 // ── middleware ───────────────────────────────────────────────────────────────
+// Canonical host: when APP_ORIGIN is set, send every other public host there so OAuth callbacks,
+// the relay page's postMessage origin and the browser's stored sessions all live on one origin.
+app.use("*", async (c, next) => {
+  if (env.appOrigin && c.req.path !== "/api/health") {
+    const host = (c.req.header("x-forwarded-host") ?? c.req.header("host") ?? "").toLowerCase();
+    let canonical = "";
+    try { canonical = new URL(env.appOrigin).host.toLowerCase(); } catch { canonical = ""; }
+    if (host && canonical && host !== canonical && !host.startsWith("localhost") && !host.startsWith("127.0.0.1") && !host.endsWith(".railway.internal")) {
+      const u = new URL(c.req.url);
+      return c.redirect(`${env.appOrigin.replace(/\/$/, "")}${u.pathname}${u.search}`, 308);
+    }
+  }
+  await next();
+});
+
 app.use("/api/*", async (c, next) => {
   // OAuth start/callback are top-level navigations and cannot carry the header.
   if (env.accessCode && c.req.path !== "/api/health" && !c.req.path.startsWith("/api/auth/") && c.req.header("x-access-code") !== env.accessCode) return errJson("Access code required", 401);
