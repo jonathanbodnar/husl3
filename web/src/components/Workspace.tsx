@@ -41,6 +41,7 @@ export function Workspace(props: {
   brainIndex: BrainIndex | null;
   onUpdate: (patch: Partial<AuditSession> | ((s: AuditSession) => AuditSession)) => void;
   onExit: () => void;
+  storageWarning?: string | null;
 }) {
   const { session: s } = props;
   const [secrets, setSecrets] = useState<Connections>(() => store.secrets(s.id));
@@ -150,10 +151,13 @@ export function Workspace(props: {
           case "todos":
             props.onUpdate((prev) => ({ ...prev, todos: mergeTodos(e.todos, prev.todos) }));
             break;
-          case "scoreboard":
+          case "scoreboard": {
+            const wasEmpty = !latest.current.scoreboard?.stats.length;
             props.onUpdate({ scoreboard: e.scoreboard, scoreboardEval: e.eval });
-            if (e.scoreboard.stats.length) setTab("scoreboard");
+            // Switch tabs only when the board first appears; later rebuilds must not yank the founder off a to-do edit.
+            if (e.scoreboard.stats.length && wasEmpty) setTab("scoreboard");
             break;
+          }
           case "usage":
             costs.push(e.cost);
             break;
@@ -218,7 +222,14 @@ export function Workspace(props: {
     try {
       const creds = await freshSecrets();
       const r = await api.runStats(creds.postgres, cur.scoreboard);
-      props.onUpdate((prev) => ({ ...prev, scoreboard: prev.scoreboard ? { ...prev.scoreboard, results: r.results, computedAt: r.computedAt } : prev.scoreboard, scoreboardEval: r.eval }));
+      props.onUpdate((prev) => {
+        if (!prev.scoreboard) return prev;
+        // Merge by id onto whatever specs exist now: a stat added meanwhile keeps its result, a removed one gains none.
+        const results = { ...prev.scoreboard.results };
+        for (const s of prev.scoreboard.stats) if (r.results[s.id]) results[s.id] = r.results[s.id];
+        const newest = Object.values(results).reduce((m, x) => (x.computedAt > m ? x.computedAt : m), "");
+        return { ...prev, scoreboard: { ...prev.scoreboard, results, computedAt: newest || prev.scoreboard.computedAt }, scoreboardEval: r.eval };
+      });
       const failed = Object.values(r.results).filter((x) => !x.ok).length;
       say(failed ? `Scoreboard refreshed; ${failed} stat${failed === 1 ? "" : "s"} failed` : "Scoreboard refreshed");
     } catch (e) { say(e instanceof Error ? e.message : String(e)); } finally { setRefreshing(false); }
@@ -286,6 +297,7 @@ export function Workspace(props: {
         <button className="btn ghost sm export" onClick={exportMd} title="Download the audit as markdown">Export</button>
         <button className="btn ghost sm panel-toggle" onClick={() => setShowPanel((v) => !v)} id="panel-toggle">{showPanel ? "Chat" : `To-dos (${s.todos.filter((t) => t.status !== "dismissed").length})`}</button>
       </header>
+      {props.storageWarning && <div className="banner ui" style={{ margin: ".5rem 1rem 0", maxWidth: "none" }}>{props.storageWarning}</div>}
       <div className={`main${showPanel ? " show-panel" : ""}`}>
         <Chat transcript={s.transcript} live={live} pendingUser={pendingUser} streaming={streaming} error={error} disabled={!chatConfigured} notice={connectNotice} onSend={(t) => void send(t)} onStop={stop} />
         <aside className="panel">

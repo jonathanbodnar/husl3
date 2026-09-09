@@ -90,13 +90,16 @@ export function ScoreboardPanel(props: {
 
 function ReadinessLine({ row, spec }: { row: ReadinessRow; spec?: StatSpec }) {
   const icon = row.status === "pass" ? "✓" : row.status === "fail" ? "✗" : row.status === "small_n" ? "≈" : row.status === "stated" ? "❝" : "○";
-  const label = row.status === "pass" ? "met" : row.status === "fail" ? "not met" : row.status === "small_n" ? "too few to say" : row.status === "stated" ? "stated" : "unmeasured";
+  const label = row.status === "pass" ? "met" : row.status === "fail" ? (row.stated ? "not met (stated)" : "not met") : row.status === "small_n" ? "too few to say" : row.status === "stated" ? "stated" : "unmeasured";
+  // A small-n row shows the counts, never the share the rule forbids.
+  const actual = row.status === "small_n" && row.numerator != null ? `${fmtInt(row.numerator)} of ${fmtInt(row.denominator ?? 0)}`
+    : row.actual != null ? (spec ? fmtValue(row.actual, spec.unit) : fmtNum(row.actual)) : null;
   return (
     <li className={`rl ${row.status}`} title={row.threshold}>
       <span className="ic" aria-hidden>{icon}</span>
       <span className="lab">{label}</span>
       <span className="txt">{row.threshold}</span>
-      {row.actual != null && <span className="act mono">{spec ? fmtValue(row.actual, spec.unit) : fmtNum(row.actual)}</span>}
+      {actual != null && <span className="act mono">{actual}</span>}
     </li>
   );
 }
@@ -127,9 +130,10 @@ function StatTile({ spec, result, brainIndex }: { spec: StatSpec; result?: StatR
           <div className="tvalue"><span className="statv">{fmtValue(result.value ?? 0, spec.unit)}</span>{result.n != null && <div className="muted small">n = {fmtInt(result.n)}</div>}</div>
         )}
       {spec.caveat && <div className="muted small">{spec.caveat}</div>}
+      {result?.notes?.map((n, i) => <div className="muted small tnote" key={i}>{n}</div>)}
       <div className="tfoot">
         <button type="button" className="alt small" onClick={() => setOpen((o) => !o)}>{open ? "less" : "why"}</button>
-        {result?.ms != null && <span className="muted small">{(result.ms / 1000).toFixed(1)}s</span>}
+        {result?.ok && result.computedAt && <span className="muted small" title={result.computedAt}>{ago(result.computedAt)}</span>}
       </div>
       {open && (
         <div className="twhy">
@@ -143,7 +147,9 @@ function StatTile({ spec, result, brainIndex }: { spec: StatSpec; result?: StatR
 
 /** Sparkline: history in the de-emphasis gray, the latest point in the data hue, one labeled value, hover reads any point. */
 function Series({ points, unit, droppedToday }: { points: { day: string; value: number }[]; unit: StatSpec["unit"]; droppedToday: boolean }) {
-  const [hover, setHover] = useState<number | null>(null);
+  const [hoverRaw, setHover] = useState<number | null>(null);
+  // The hover index can outlive a shrinking series (the tile keeps its key); clamp it.
+  const hover = hoverRaw == null ? null : Math.min(hoverRaw, points.length - 1);
   const W = 320, H = 72, PX = 4, PY = 10;
   const vals = points.map((p) => p.value);
   const min = Math.min(...vals, 0), max = Math.max(...vals, 1);
@@ -152,12 +158,15 @@ function Series({ points, unit, droppedToday }: { points: { day: string; value: 
   const path = points.map((p, i) => `${i ? "L" : "M"}${x(i).toFixed(1)},${y(p.value).toFixed(1)}`).join(" ");
   const last = points[points.length - 1];
   const shown = hover != null ? points[hover] : last;
-  const total7 = vals.slice(-7).reduce((a, b) => a + b, 0);
+  // Seven CALENDAR days ending on the latest point, not the last seven rows (quiet days have no row).
+  const cutoff = Date.parse(last.day) - 6 * 86_400_000;
+  const total7 = points.filter((p) => Date.parse(p.day) >= cutoff).reduce((a, p) => a + p.value, 0);
+  const additive = unit === "count" || unit === "usd";
   return (
     <div className="series">
       <div className="tvalue">
         <span className="statv">{fmtValue(shown.value, unit)}</span>
-        <div className="muted small">{hover != null ? shown.day : `latest complete day, ${last.day}`}{unit === "count" && points.length >= 7 && hover == null ? ` · ${fmtInt(total7)} in the last 7 days` : ""}</div>
+        <div className="muted small">{hover != null ? shown.day : `latest complete day, ${last.day}`}{additive && points.length >= 2 && hover == null ? ` · ${fmtValue(total7, unit)} in the 7 days to ${last.day.slice(5)}` : ""}</div>
       </div>
       <svg viewBox={`0 0 ${W} ${H}`} className="spark" role="img" aria-label={`${points.length} daily values, latest ${fmtValue(last.value, unit)}`}
         onMouseLeave={() => setHover(null)}
@@ -173,13 +182,13 @@ function Series({ points, unit, droppedToday }: { points: { day: string; value: 
 }
 
 /** Funnel: horizontal bars sharing one baseline, count at the tip, step conversion beside the label. */
-function Funnel({ steps }: { steps: { step: string; count: number; fromPrev?: number; fromFirst?: number }[] }) {
+function Funnel({ steps }: { steps: { step: string; count: number; fromPrev?: number; fromFirst?: number; smallN?: boolean }[] }) {
   const max = Math.max(...steps.map((s) => s.count), 1);
   return (
     <div className="bars">
       {steps.map((s, i) => (
         <div className="bar" key={i} title={`${s.step}: ${fmtInt(s.count)}${s.fromFirst != null ? ` · ${pct(s.fromFirst)} of first step` : ""}`}>
-          <div className="blabel"><span>{s.step}</span>{i > 0 && s.fromPrev != null && <span className="muted small"> {pct(s.fromPrev)} of previous</span>}</div>
+          <div className="blabel"><span>{s.step}</span>{i > 0 && (s.fromPrev != null ? <span className="muted small"> {pct(s.fromPrev)} of previous</span> : s.smallN ? <span className="muted small"> too few to quote a share</span> : null)}</div>
           <div className="btrack"><div className="bfill" style={{ width: `${Math.max(2, (s.count / max) * 100)}%` }} /><span className="bval mono">{fmtInt(s.count)}</span></div>
         </div>
       ))}
@@ -187,14 +196,15 @@ function Funnel({ steps }: { steps: { step: string; count: number; fromPrev?: nu
   );
 }
 
-function Breakdown({ items, unit }: { items: { label: string; value: number; n?: number }[]; unit: StatSpec["unit"] }) {
+function Breakdown({ items, unit }: { items: { label: string; value: number; n?: number; smallN?: boolean }[]; unit: StatSpec["unit"] }) {
   const max = Math.max(...items.map((i) => i.value), 1e-9);
+  const shown = (it: { value: number; n?: number; smallN?: boolean }) => (it.smallN ? `${fmtInt(Math.round(it.value * (it.n ?? 0)))} of ${fmtInt(it.n ?? 0)}` : fmtValue(it.value, unit));
   return (
     <div className="bars">
       {items.map((it, i) => (
-        <div className="bar" key={i} title={`${it.label}: ${fmtValue(it.value, unit)}${it.n != null ? ` (n=${fmtInt(it.n)})` : ""}`}>
-          <div className="blabel"><span>{it.label}</span>{it.n != null && <span className="muted small"> n={fmtInt(it.n)}</span>}</div>
-          <div className="btrack"><div className="bfill" style={{ width: `${Math.max(2, (it.value / max) * 100)}%` }} /><span className="bval mono">{fmtValue(it.value, unit)}</span></div>
+        <div className="bar" key={i} title={`${it.label}: ${shown(it)}${it.n != null && !it.smallN ? ` (n=${fmtInt(it.n)})` : ""}`}>
+          <div className="blabel"><span>{it.label}</span>{it.n != null && !it.smallN && <span className="muted small"> n={fmtInt(it.n)}</span>}{it.smallN && <span className="muted small"> too few to quote a share</span>}</div>
+          <div className="btrack"><div className="bfill" style={{ width: `${Math.max(2, (it.value / max) * 100)}%` }} /><span className="bval mono">{shown(it)}</span></div>
         </div>
       ))}
     </div>

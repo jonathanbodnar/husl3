@@ -81,6 +81,7 @@ export function App() {
       brainIndex={brainIndex}
       onUpdate={(patch) => update(current.id, patch)}
       onExit={() => setCurrentId(null)}
+      storageWarning={storageWarning}
     />
   );
 }

@@ -72,29 +72,32 @@ export function renderScoreboard(board: Scoreboard | null | undefined, dbConnect
       : "## Scoreboard\n(empty — no database connected; ask for one when a number would decide the next move)";
   }
   const ev = evaluateScoreboard(board);
-  const L: string[] = [`## Scoreboard (${board.stats.length} stats; computed ${board.computedAt ? board.computedAt.slice(0, 16) + "Z" : "never"}${board.timezone ? `; reporting timezone ${board.timezone}` : ""})`];
+  const L: string[] = [`## Scoreboard (${board.stats.length} stats; newest computed ${board.computedAt ? board.computedAt.slice(0, 16) + "Z" : "never"}; reporting timezone ${board.timezone ?? "NOT SET — UTC assumed for day boundaries; set it"})`];
   if (board.goal) L.push(`Money event: ${board.goal}`);
   if (board.activation) L.push(`Activation: ${board.activation}`);
   if (board.coreRequest) L.push(`Core request: ${board.coreRequest}`);
   for (const s of [...board.stats].sort((a, b) => a.order - b.order)) {
     const r = board.results[s.id];
-    const tag = `${s.id}${s.metricId ? ` [${s.metricId}${s.field ? "." + s.field : ""}]` : ""}`;
+    const age = r?.ok && board.computedAt && r.computedAt && Date.parse(board.computedAt) - Date.parse(r.computedAt) > 3_600_000 ? ` (computed ${r.computedAt.slice(0, 16)}Z)` : "";
+    const tag = `${s.id}${s.metricId ? ` [${s.metricId}${s.field ? "." + s.field : ""}]` : ""}${age}`;
     if (!r) { L.push(`- ${tag} ${s.title}: not run`); continue; }
     if (!r.ok) { L.push(`- ${tag} ${s.title}: FAILED — ${r.error}`); continue; }
     if (r.points) {
       const last = r.points.slice(-7).map((p) => p.value);
       const prev = r.points.slice(-14, -7).map((p) => p.value);
       const sum = (a: number[]) => a.reduce((x, y) => x + y, 0);
-      L.push(`- ${tag} ${s.title} (daily, ${r.points.length} days to ${r.points[r.points.length - 1].day}): last 7 = ${last.join(", ")}${prev.length === 7 ? ` (prior 7 total ${sum(prev)} → ${sum(last)})` : ""}${r.droppedToday ? "; today excluded" : ""}`);
-    } else if (r.steps) L.push(`- ${tag} ${s.title} (funnel): ${r.steps.map((st, i) => `${st.step} ${st.count}${i > 0 && st.fromPrev != null ? ` (${pct(st.fromPrev)} of previous)` : ""}`).join(" → ")}`);
-    else if (r.items) L.push(`- ${tag} ${s.title} (breakdown): ${r.items.map((i) => `${i.label} ${fmtVal(i.value, s.unit)}${i.n != null ? ` n=${i.n}` : ""}`).join("; ")}`);
+      const additive = s.unit === "count" || s.unit === "usd";
+      L.push(`- ${tag} ${s.title} (daily, ${r.points.length} points to ${r.points[r.points.length - 1].day}): last 7 points = ${last.join(", ")}${additive && prev.length === 7 ? ` (prior 7 total ${sum(prev)} → ${sum(last)})` : ""}${r.droppedToday ? "; today excluded" : ""}`);
+    } else if (r.steps) L.push(`- ${tag} ${s.title} (funnel): ${r.steps.map((st, i) => `${st.step} ${st.count}${i > 0 ? (st.fromPrev != null ? ` (${pct(st.fromPrev)} of previous)` : " (too few to quote a share)") : ""}`).join(" → ")}`);
+    else if (r.items) L.push(`- ${tag} ${s.title} (breakdown): ${r.items.map((i) => `${i.label} ${i.smallN ? `${Math.round(i.value * (i.n ?? 0))} of ${i.n} (too few to quote a share)` : fmtVal(i.value, s.unit)}${i.n != null && !i.smallN ? ` n=${i.n}` : ""}`).join("; ")}`);
     else if (r.numerator != null) L.push(`- ${tag} ${s.title}: ${r.numerator}/${r.denominator}${r.smallN ? " — small n: quote the counts, not a percentage" : ` = ${pct(r.value!)}`}`);
     else L.push(`- ${tag} ${s.title}: ${fmtVal(r.value ?? 0, s.unit)}${r.n != null ? ` (n=${r.n})` : ""}${s.kind === "assert" ? ` (STATED by the founder${s.source ? `: ${s.source}` : ""}, not measured)` : ""}`);
     if (s.caveat) L.push(`  caveat: ${s.caveat}`);
+    for (const n of r.notes ?? []) L.push(`  note: ${n}`);
   }
   L.push(`Stage by the numbers: ${ev.stageByNumbers ?? "not yet placeable (no readiness check measured)"}`);
   const graded = ev.rows.filter((r) => r.status !== "unmeasured");
-  if (graded.length) L.push(`Readiness graded: ${graded.map((r) => `${r.stage} ${r.metric}.${r.field} ${r.status}${r.actual != null ? ` (${fmtVal(r.actual, "count")} ${r.op} ${r.value})` : ""}`).join("; ")}`);
+  if (graded.length) L.push(`Readiness graded: ${graded.map((r) => `${r.stage} ${r.metric}.${r.field} ${r.status}${r.status === "small_n" ? ` (${r.numerator} of ${r.denominator}: too few to grade)` : r.actual != null ? ` (${r.stated ? "stated " : ""}${fmtVal(r.actual, "count")} ${r.op} ${r.value})` : ""}`).join("; ")}`);
   if (ev.stageByNumbers) {
     const un = ev.rows.filter((r) => r.stage === ev.stageByNumbers && r.status === "unmeasured");
     if (un.length) L.push(`Unmeasured at ${ev.stageByNumbers}: ${un.map((r) => `${r.metric}.${r.field}`).join(", ")} — bind these before advancing anyone`);

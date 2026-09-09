@@ -43,16 +43,18 @@ function productContext(req: PromptsRequest): string {
   } else L.push("Repository: not connected (tell the agent to locate files).");
   if (req.scoreboard?.stats?.length) {
     const sb = req.scoreboard;
+    const fmtU = (v: number, unit: string) => (unit === "percent" ? `${(v * 100).toFixed(1)}%` : unit === "usd" ? `$${v.toFixed(2)}` : String(v));
     const lines = [...sb.stats].sort((a, b) => a.order - b.order).map((s) => {
       const r = sb.results[s.id];
       if (!r || !r.ok) return `- ${s.title}: not measured${r?.error ? ` (${r.error.slice(0, 80)})` : ""}`;
-      if (r.points) return `- ${s.title}: last 7 days ${r.points.slice(-7).map((p) => p.value).join(", ")}`;
-      if (r.steps) return `- ${s.title}: ${r.steps.map((st) => `${st.step} ${st.count}`).join(" → ")}`;
-      if (r.items) return `- ${s.title}: ${r.items.map((i) => `${i.label} ${i.value}`).join(", ")}`;
-      if (r.numerator != null) return `- ${s.title}: ${r.numerator}/${r.denominator}${r.smallN ? " (small n; do not quote as a percentage)" : ` = ${(r.value! * 100).toFixed(1)}%`}`;
-      return `- ${s.title}: ${r.value}${s.kind === "assert" ? " (founder-stated)" : ""}`;
+      const when = r.computedAt ? ` (computed ${r.computedAt.slice(0, 10)})` : "";
+      if (r.points) { const last = r.points.slice(-7); return `- ${s.title}: last ${last.length} daily points to ${last[last.length - 1].day}: ${last.map((p) => `${p.day.slice(5)}=${fmtU(p.value, s.unit)}`).join(", ")}${when}`; }
+      if (r.steps) return `- ${s.title}: ${r.steps.map((st, i) => `${st.step} ${st.count}${i > 0 ? (st.fromPrev != null ? ` (${(st.fromPrev * 100).toFixed(0)}% of previous)` : " (too few to quote a share)") : ""}`).join(" → ")}${when}`;
+      if (r.items) return `- ${s.title}: ${r.items.map((i) => `${i.label} ${i.smallN ? `${Math.round(i.value * (i.n ?? 0))} of ${i.n} (too few to quote a share)` : fmtU(i.value, s.unit)}${i.n != null && !i.smallN ? ` (n=${i.n})` : ""}`).join(", ")}${when}`;
+      if (r.numerator != null) return `- ${s.title}: ${r.numerator} of ${r.denominator}${r.smallN ? " (small n; never quote as a percentage)" : ` = ${(r.value! * 100).toFixed(1)}%`}${when}`;
+      return `- ${s.title}: ${fmtU(r.value ?? 0, s.unit)}${r.n != null ? ` (n=${r.n})` : ""}${s.kind === "assert" ? " (founder-stated, not measured)" : ""}${when}`;
     });
-    L.push(`Scoreboard (the founder's own numbers${sb.goal ? `; money event: ${sb.goal}` : ""}${sb.activation ? `; activation: ${sb.activation}` : ""}${sb.timezone ? `; timezone ${sb.timezone}` : ""}):\n${lines.join("\n")}`);
+    L.push(`Scoreboard (the founder's own numbers${sb.goal ? `; money event: ${sb.goal}` : ""}${sb.activation ? `; activation: ${sb.activation}` : ""}; reporting timezone ${sb.timezone ?? "not set"}):\n${lines.join("\n")}`);
   }
   if (req.schema) L.push(`Database (read-only summary):\n${cap(req.schema.summary, 3500)}`);
   else L.push("Database: not connected (the agent must not assume table names).");

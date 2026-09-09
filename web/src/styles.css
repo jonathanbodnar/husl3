@@ -220,6 +220,7 @@ h1,h2,h3,h4,.display{font-family:var(--display);font-weight:600;letter-spacing:-
 .statv{font-family:var(--ui);font-weight:600;font-size:1.7rem;letter-spacing:-.01em;line-height:1.1;font-variant-numeric:tabular-nums;color:var(--ink)}
 .statv .of{font-size:.95rem;font-weight:500;color:var(--muted);letter-spacing:0}
 .terr{color:var(--red);font-size:.82rem;line-height:1.35}
+.tnote{color:var(--gold);line-height:1.35}
 .tfoot{display:flex;justify-content:space-between;align-items:center;margin-top:auto}
 .twhy{border-top:1px dashed var(--line);padding-top:.45rem;font-size:.85rem;color:var(--ink-2);font-family:var(--body);display:flex;flex-direction:column;gap:.4rem}
 .twhy pre{margin:0;white-space:pre-wrap;word-break:break-word;font-size:.72rem;line-height:1.4;background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:.5rem .6rem;max-height:220px;overflow:auto}

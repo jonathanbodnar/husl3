@@ -40,6 +40,7 @@ export async function runChatTurn(req: ChatRequest, emit: (e: ChatEvent) => void
 
   let todos: Todo[] = Array.isArray(req.todos) ? req.todos : [];
   let scoreboard: Scoreboard = req.scoreboard && Array.isArray(req.scoreboard.stats) ? { ...req.scoreboard, results: req.scoreboard.results ?? {} } : { stats: [], results: {} };
+  let scoreboardChanged = false;
   const now = () => new Date().toISOString();
   const produced: TranscriptMessage[] = [{ role: "user", content: userText, at: now(), hidden: !!req.kickoff }];
   const messages: Message[] = [
@@ -75,7 +76,7 @@ export async function runChatTurn(req: ChatRequest, emit: (e: ChatEvent) => void
         emit({ type: "tool_start", id: call.id, name: call.function.name, args: args.__parse_error ? {} : args });
         const out = await executeTool(call.function.name, args, { req, todos, scoreboard });
         if (out.todos) { todos = out.todos; emit({ type: "todos", todos }); }
-        if (out.scoreboard && out.eval) { scoreboard = out.scoreboard; emit({ type: "scoreboard", scoreboard, eval: out.eval }); }
+        if (out.scoreboard && out.eval) { scoreboard = out.scoreboard; scoreboardChanged = true; emit({ type: "scoreboard", scoreboard, eval: out.eval }); }
         emit({ type: "tool_result", id: call.id, name: call.function.name, ui: out.ui });
         produced.push({ role: "tool", tool_call_id: call.id, name: call.function.name, content: out.content, ui: out.ui });
         messages.push({ role: "tool", tool_call_id: call.id, content: out.content });
@@ -94,7 +95,8 @@ export async function runChatTurn(req: ChatRequest, emit: (e: ChatEvent) => void
     const answered = new Set(produced.filter((m) => m.role === "tool").map((m) => (m as { tool_call_id: string }).tool_call_id));
     if (!last.tool_calls.every((c) => answered.has(c.id))) produced.pop();
   }
-  emit({ type: "done", messages: produced, todos, scoreboard });
+  // Only a board a tool changed goes back; the request-time copy would overwrite a refresh made mid-turn.
+  emit({ type: "done", messages: produced, todos, scoreboard: scoreboardChanged ? scoreboard : undefined });
   return { usage, usd };
 }
 

@@ -43,7 +43,8 @@ export function evaluateScoreboard(board: Scoreboard | null | undefined): Scoreb
       // Fall back to a stat bound to the metric alone when it is the only one.
       const rank = (s: { kind: string }) => (s.kind === "series" ? 1 : 0);
       const exact = stats.filter((s) => s.metricId === metric && s.field === field).sort((a, b) => rank(a) - rank(b));
-      const loose = exact.length ? [] : stats.filter((s) => s.metricId === metric);
+      // A stat that declared a DIFFERENT field is not a candidate for this one.
+      const loose = exact.length ? [] : stats.filter((s) => s.metricId === metric && !s.field);
       const spec = exact[0] ?? (loose.length === 1 ? loose[0] : undefined);
       if (spec) {
         const res = results[spec.id];
@@ -51,11 +52,17 @@ export function evaluateScoreboard(board: Scoreboard | null | undefined): Scoreb
         // A series is graded on its latest complete period.
         const actual = res?.ok ? (typeof res.value === "number" ? res.value : res.points?.length ? res.points[res.points.length - 1].value : undefined) : undefined;
         if (typeof actual === "number" && Number.isFinite(target)) {
-          measuredCount++;
-          if (spec.kind === "assert") row.status = "stated";
-          else if (res!.smallN) row.status = "small_n";
-          else row.status = cmp(op, actual, target) ? "pass" : "fail";
           row.actual = actual;
+          if (res!.numerator != null) { row.numerator = res!.numerator; row.denominator = res!.denominator; }
+          if (spec.kind === "assert") {
+            // Stated, never measured: it is still compared to the threshold, and it does not count as measured.
+            row.stated = true;
+            row.status = cmp(op, actual, target) ? "stated" : "fail";
+          } else {
+            measuredCount++;
+            if (res!.smallN) row.status = "small_n";
+            else row.status = cmp(op, actual, target) ? "pass" : "fail";
+          }
         }
       }
       rows.push(row);

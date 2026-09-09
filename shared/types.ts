@@ -157,10 +157,12 @@ export interface StatResult {
   /** series */
   points?: { day: string; value: number }[];
   droppedToday?: boolean;
-  /** funnel */
-  steps?: { step: string; count: number; fromPrev?: number; fromFirst?: number }[];
-  /** breakdown */
-  items?: { label: string; value: number; n?: number }[];
+  /** funnel: a conversion is present only when the small-n rule allows quoting it (step ≥ 5, previous ≥ 100) */
+  steps?: { step: string; count: number; fromPrev?: number; fromFirst?: number; smallN?: boolean }[];
+  /** breakdown: smallN is set for percent items whose n (or k = value·n) is too small to quote */
+  items?: { label: string; value: number; n?: number; smallN?: boolean }[];
+  /** Honest caveats the server attached (multi-row results used row 1, steps not monotone, truncation…). */
+  notes?: string[];
 }
 
 export interface Scoreboard {
@@ -188,6 +190,11 @@ export interface ReadinessRow {
   note?: string;
   status: ReadinessStatus;
   actual?: number;
+  /** counts behind a rate, so a small-n row can show them instead of a share */
+  numerator?: number;
+  denominator?: number;
+  /** the value was stated by the founder, not measured */
+  stated?: boolean;
   statId?: string;
 }
 export interface ScoreboardEval {

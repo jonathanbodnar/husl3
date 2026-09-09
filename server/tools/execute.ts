@@ -119,10 +119,12 @@ async function applyScoreboardOps(args: Record<string, unknown>, ctx: ToolContex
   const warnings: string[] = [];
   const now = new Date().toISOString();
   for (const k of ["goal", "activation", "coreRequest"] as const) if (typeof args[k] === "string" && (args[k] as string).trim()) board[k] = (args[k] as string).trim().slice(0, 300);
+  let timezoneChanged = false;
   if (typeof args.timezone === "string" && args.timezone.trim()) {
-    try { new Intl.DateTimeFormat("en-CA", { timeZone: args.timezone.trim() }); board.timezone = args.timezone.trim(); }
+    try { new Intl.DateTimeFormat("en-CA", { timeZone: args.timezone.trim() }); if (board.timezone !== args.timezone.trim()) timezoneChanged = !!board.timezone; board.timezone = args.timezone.trim(); }
     catch { warnings.push(`unknown timezone ignored: ${args.timezone}`); }
   }
+  if (!board.timezone) warnings.push("No reporting timezone is set: today is being dropped on UTC boundaries and day buckets may not match the founder's day. Set timezone (IANA) now.");
   const touched: string[] = [];
   const validMetric = (m: unknown) => (typeof m === "string" && brainIndex.get(m)?.kind === "metric" ? m : undefined);
   let added = 0, changed = 0, removed = 0;
@@ -150,7 +152,7 @@ async function applyScoreboardOps(args: Record<string, unknown>, ctx: ToolContex
       const s = board.stats.find((x) => x.id === op.id);
       if (!s) { warnings.push(`update skipped: no stat ${String(op.id)}`); continue; }
       if (typeof op.title === "string" && op.title.trim()) s.title = op.title.trim().slice(0, 90);
-      if (KINDS.includes(op.kind as StatKind)) s.kind = op.kind as StatKind;
+      if (KINDS.includes(op.kind as StatKind) && op.kind !== s.kind) { s.kind = op.kind as StatKind; if (typeof op.sql !== "string" || !op.sql.trim()) warnings.push(`${s.id}: kind changed to ${s.kind} but the SQL was not; check it returns that kind's columns`); }
       if (UNITS.includes(op.unit as StatUnit)) s.unit = op.unit as StatUnit;
       if (typeof op.sql === "string" && op.sql.trim()) s.sql = op.sql.trim();
       if (typeof op.metricId === "string") { const m = validMetric(op.metricId); if (m) s.metricId = m; else warnings.push(`unknown metricId ignored: ${op.metricId}`); }
@@ -172,12 +174,21 @@ async function applyScoreboardOps(args: Record<string, unknown>, ctx: ToolContex
       for (const s of [...board.stats].sort((a, b) => a.order - b.order)) if (!ids.includes(s.id)) s.order = order++;
     } else warnings.push(`unknown op ${kind}`);
   }
-  // Run what changed (and anything never run), on one connection.
-  const toRun = board.stats.filter((s) => touched.includes(s.id) || !board.results[s.id]).map((s) => s.id);
+  // Run what changed (and anything never run), on one connection. A timezone change moves every day
+  // boundary, so everything is re-run then.
+  const toRun = timezoneChanged ? board.stats.map((s) => s.id) : board.stats.filter((s) => touched.includes(s.id) || !board.results[s.id]).map((s) => s.id);
   if (toRun.length) {
-    const fresh = await runScoreboard(ctx.req.connections?.postgres, board, toRun);
-    Object.assign(board.results, fresh);
-    board.computedAt = new Date().toISOString();
+    try {
+      const fresh = await runScoreboard(ctx.req.connections?.postgres, board, toRun);
+      Object.assign(board.results, fresh);
+    } catch (e) {
+      // The specs are kept; the failure is recorded on each stat so the founder can refresh once the database answers.
+      const message = e instanceof Error ? e.message : String(e);
+      for (const id of toRun) board.results[id] = { specId: id, ok: false, computedAt: new Date().toISOString(), error: `Could not reach the database: ${message}` };
+      warnings.push(`the database could not be reached (${message}); the stats were saved and will run on refresh`);
+    }
+    // The board's time is the newest stat's time; older stats carry their own.
+    board.computedAt = Object.values(board.results).reduce((m, r) => (r.computedAt > m ? r.computedAt : m), "") || undefined;
   }
   const evaluation = evaluateScoreboard(board);
   const failed = board.stats.filter((s) => board.results[s.id] && !board.results[s.id].ok);
@@ -190,7 +201,7 @@ async function applyScoreboardOps(args: Record<string, unknown>, ctx: ToolContex
     result: [added && `${added} added`, changed && `${changed} changed`, removed && `${removed} removed`].filter(Boolean).join(", ") || "no change",
     goal: board.goal, activation: board.activation, timezone: board.timezone,
     stats: [...board.stats].sort((a, b) => a.order - b.order).map((s) => ({ id: s.id, title: s.title, kind: s.kind, metricId: s.metricId, field: s.field, result: compactResult(board.results[s.id]) })),
-    readiness: { stageByNumbers: evaluation.stageByNumbers, rows: evaluation.rows.filter((r) => r.status !== "unmeasured").map((r) => `${r.stage} ${r.metric}.${r.field}: ${r.status}${r.actual != null ? ` (actual ${fmtNum(r.actual)} ${r.op} ${r.value})` : ""}`), unboundForCurrentStage: evaluation.stageByNumbers ? evaluation.unbound[evaluation.stageByNumbers] : undefined },
+    readiness: { stageByNumbers: evaluation.stageByNumbers, rows: evaluation.rows.filter((r) => r.status !== "unmeasured").map((r) => `${r.stage} ${r.metric}.${r.field}: ${r.status}${r.status === "small_n" ? ` (${r.numerator} of ${r.denominator}; too few to grade)` : r.actual != null ? ` (${r.stated ? "stated " : ""}${fmtNum(r.actual)} ${r.op} ${r.value})` : ""}`), unboundForCurrentStage: evaluation.stageByNumbers ? evaluation.unbound[evaluation.stageByNumbers] : undefined },
     warnings: [...warnings, ...failed.map((s) => `${s.id} "${s.title}" failed: ${board.results[s.id].error}`)],
   };
   const okCount = board.stats.filter((s) => board.results[s.id]?.ok).length;
@@ -208,10 +219,10 @@ function compactResult(r: import("../../shared/types.js").StatResult | undefined
   if (!r) return "not run";
   if (!r.ok) return { error: r.error };
   if (r.points) return { points: r.points.length, first: r.points[0], last: r.points[r.points.length - 1], last7: r.points.slice(-7).map((p) => p.value), droppedToday: r.droppedToday };
-  if (r.steps) return { steps: r.steps.map((s) => `${s.step}: ${s.count}${s.fromPrev != null ? ` (${(s.fromPrev * 100).toFixed(0)}% of prev)` : ""}`) };
-  if (r.items) return { items: r.items.map((i) => `${i.label}: ${fmtNum(i.value)}${i.n != null ? ` (n=${i.n})` : ""}`) };
-  if (r.numerator != null) return { numerator: r.numerator, denominator: r.denominator, share: r.smallN ? "small-n: quote the counts, not a percentage" : `${(r.value! * 100).toFixed(1)}%` };
-  return { value: r.value, n: r.n };
+  if (r.steps) return { steps: r.steps.map((s) => `${s.step}: ${s.count}${s.fromPrev != null ? ` (${(s.fromPrev * 100).toFixed(0)}% of prev)` : s.smallN ? " (too few to quote a share)" : ""}`), notes: r.notes };
+  if (r.items) return { items: r.items.map((i) => `${i.label}: ${i.smallN ? `${Math.round(i.value * (i.n ?? 0))} of ${i.n} (too few to quote a share)` : fmtNum(i.value)}${i.n != null && !i.smallN ? ` (n=${i.n})` : ""}`), notes: r.notes };
+  if (r.numerator != null) return { numerator: r.numerator, denominator: r.denominator, share: r.smallN ? "small-n: quote the counts, not a percentage" : `${(r.value! * 100).toFixed(1)}%`, notes: r.notes };
+  return { value: r.value, n: r.n, notes: r.notes };
 }
 
 async function fetchPage(args: Record<string, unknown>, ctx: ToolContext): Promise<ToolOutcome> {

@@ -6,6 +6,9 @@ import { prepareReadOnlySql, uniqueColumns } from "./sqlGate.js";
 import { sbQuery } from "./supabaseMgmt.js";
 
 const { Client } = pg;
+// A DATE column must stay the calendar day the database computed. node-postgres would otherwise turn
+// it into a JS Date at the HOST's local midnight, which shifts the day for any host east of UTC.
+pg.types.setTypeParser(1082, (v: string) => v);
 
 export { prepareReadOnlySql } from "./sqlGate.js";
 
@@ -107,7 +110,7 @@ export async function runReadOnlyQuery(conn: PostgresConnection, input: string, 
 }
 
 export interface BatchItem { id: string; sql: string; limit?: number }
-export interface BatchResult { rows: Record<string, unknown>[]; columns: string[]; ms: number; error?: string }
+export interface BatchResult { rows: Record<string, unknown>[]; columns: string[]; ms: number; error?: string; truncated?: boolean }
 
 /**
  * Runs several read-only statements on ONE connection (or one Management API session) so a scoreboard
@@ -131,7 +134,8 @@ export async function runReadOnlyBatch(conn: PostgresConnection, items: BatchIte
       const t0 = Date.now();
       try {
         const { rows, columns } = await run(p.sql);
-        out[p.it.id] = { rows: rows.slice(0, p.it.limit ?? 200).map((r) => Object.fromEntries(Object.entries(r).map(([k, v]) => [k, jsonSafe(v)]))), columns, ms: Date.now() - t0 };
+        const cap = p.it.limit ?? 200;
+        out[p.it.id] = { rows: rows.slice(0, cap).map((r) => Object.fromEntries(Object.entries(r).map(([k, v]) => [k, jsonSafe(v)]))), columns, ms: Date.now() - t0, truncated: rows.length > cap };
       } catch (e) {
         out[p.it.id] = { rows: [], columns: [], ms: Date.now() - t0, error: e instanceof Error ? e.message : String(e) };
         // A failed statement aborts a Postgres transaction; the runner opened a single read-only one, so

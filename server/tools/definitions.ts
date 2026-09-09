@@ -52,12 +52,12 @@ export function toolsFor(opts: { db: boolean; github: boolean }): Tool[] {
       function: {
         name: "update_scoreboard",
         description:
-          `Build or change the founder's scoreboard: the brain's metric recipes bound to THEIR tables, run by the server, graded against the journey's readiness checks, and shown in a side panel. Set goal / activation / coreRequest / timezone the first time. Each stat has a kind with a strict SQL contract:
+          `Build or change the founder's scoreboard: the brain's metric recipes bound to THEIR tables, run by the server, graded against the journey's readiness checks, and shown in a side panel. Set goal / activation / coreRequest and the IANA timezone the first time (the timezone is required: today is dropped and days are bucketed on it). Each stat has a kind with a strict SQL contract:
 number: one row with a numeric column "value" (optional "n").
 rate: one row with integer columns "numerator" and "denominator" (the server computes the share and applies the small-n rule).
 series: rows "day" (date) and "value", ascending, one per calendar day in the reporting timezone (the server drops today).
 funnel: rows "step" (text) and "count", one per step in path order, first step = the widest.
-breakdown: rows "label" and "value" (optional "n").
+breakdown: rows "label" and "value"; with unit percent, "n" (the denominator) is REQUIRED so the small-n rule can be applied.
 assert: no SQL; a value the founder stated, with source. Shown as stated, never as measured.
 Rules for every SQL: name the reporting timezone (AT TIME ZONE '<tz>'); day zero is the signup's calendar day in that zone; exclude internal accounts and bots where the schema lets you; never quote a share the small-n rule forbids (the server marks it). Bind metricId and field to the catalog below so readiness is graded; results and errors come back to you at once, so fix a failing stat in the same turn. Keep 4 to 12 stats: the money event first, then activation, then the stage's instrument_now list.
 ${bindingCatalog()}`,
