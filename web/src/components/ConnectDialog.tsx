@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import type { Connections, DbSchema, GithubRepoItem, HealthResponse, RepoDigest, SupabaseLink, SupabaseProjectItem } from "../../../shared/types";
+import type { Connections, DbSchema, GithubRepoItem, HealthResponse, OAuthRelay, RepoDigest, SupabaseLink, SupabaseProjectItem } from "../../../shared/types";
 import { api } from "../api";
 import { consumePendingOAuth, startOAuth } from "../oauth";
 
@@ -11,6 +11,8 @@ export function ConnectDialog(props: {
   schema: DbSchema | null;
   repo: RepoDigest | null;
   remembered: boolean;
+  /** A sign-in already started by the click that opened this dialog (keeps the popup inside the user gesture). */
+  pending?: { provider: "github" | "supabase"; promise: Promise<OAuthRelay> } | null;
   onClose: () => void;
   onDb: (conn: Connections["postgres"] | null, schema: DbSchema | null, remember: boolean) => void;
   onRepo: (conn: Connections["github"] | null, digest: RepoDigest | null, remember: boolean) => void;
@@ -41,6 +43,11 @@ export function ConnectDialog(props: {
   useEffect(() => {
     const sb = consumePendingOAuth("supabase"); if (sb) void afterSupabaseAuth(sb.supabase);
     const gh = consumePendingOAuth("github"); if (gh) void afterGithubAuth(gh.github);
+    if (props.pending) {
+      const { provider, promise } = props.pending;
+      if (provider === "github") { setGhBusy(true); promise.then((r) => (r.ok && r.provider === "github" ? afterGithubAuth(r.github) : Promise.reject(new Error(r.ok ? "unexpected provider" : r.error)))).catch((e) => { setGhMsg({ ok: false, text: e instanceof Error ? e.message : String(e) }); setGhBusy(false); }); }
+      else { setDbBusy(true); promise.then((r) => (r.ok && r.provider === "supabase" ? afterSupabaseAuth(r.supabase) : Promise.reject(new Error(r.ok ? "unexpected provider" : r.error)))).catch((e) => { setDbMsg({ ok: false, text: e instanceof Error ? e.message : String(e) }); setDbBusy(false); }); }
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -139,7 +146,12 @@ export function ConnectDialog(props: {
             {oauth.supabase && (
               <button type="button" className="alt small" onClick={() => setShowPg((v) => !v)}>{showPg ? "Use Supabase sign-in instead" : "Use a Postgres connection string instead (any Postgres)"}</button>
             )}
-            {!oauth.supabase && <div className="note">Supabase sign-in is not configured on this server yet; a connection string works meanwhile.</div>}
+            {!oauth.supabase && (
+              <div className="rowb">
+                <button className="btn primary sm" disabled title="Not configured on this server: set SUPABASE_OAUTH_CLIENT_ID and SUPABASE_OAUTH_CLIENT_SECRET">Connect Supabase</button>
+                <span className="note">Sign-in is not configured on this server yet (SUPABASE_OAUTH_CLIENT_ID / SECRET). A connection string works meanwhile.</span>
+              </div>
+            )}
           </section>
 
           {/* ── Repository ── */}
@@ -192,7 +204,12 @@ export function ConnectDialog(props: {
             {oauth.github && (
               <button type="button" className="alt small" onClick={() => setShowPat((v) => !v)}>{showPat ? "Use GitHub sign-in instead" : "Use a personal access token instead"}</button>
             )}
-            {!oauth.github && <div className="note">GitHub sign-in is not configured on this server yet; a token works meanwhile.</div>}
+            {!oauth.github && (
+              <div className="rowb">
+                <button className="btn primary sm" disabled title="Not configured on this server: set GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET">Connect GitHub</button>
+                <span className="note">Sign-in is not configured on this server yet (GITHUB_CLIENT_ID / SECRET). A token works meanwhile.</span>
+              </div>
+            )}
           </section>
 
           <section>

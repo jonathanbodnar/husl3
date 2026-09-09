@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { ChatRequest, Connections, CostEvent, HealthResponse, Todo } from "../../../shared/types";
+import type { ChatRequest, Connections, CostEvent, HealthResponse, OAuthRelay, Todo } from "../../../shared/types";
+import { startOAuth } from "../oauth";
 import { api, type BrainIndex } from "../api";
 import { store, totalUsd, type AuditSession } from "../state";
 import { Chat, type LiveSegment } from "./Chat";
@@ -24,6 +25,15 @@ export function Workspace(props: {
   const [showPanel, setShowPanel] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const [connectDismissed, setConnectDismissed] = useState(false);
+  const [pendingOAuth, setPendingOAuth] = useState<{ provider: "github" | "supabase"; promise: Promise<OAuthRelay> } | null>(null);
+  /** Opens the dialog; when the provider's sign-in is configured and not yet connected, starts it in this click (popup blockers need the gesture). */
+  const openConnect = (provider?: "github" | "supabase") => {
+    const oauth = props.health?.oauth;
+    const connected = provider === "github" ? !!secrets.github : provider === "supabase" ? !!secrets.postgres : true;
+    if (provider && oauth?.[provider] && !connected) setPendingOAuth({ provider, promise: startOAuth(provider) as Promise<OAuthRelay> });
+    else setPendingOAuth(null);
+    setConnectOpen(true);
+  };
   const abortRef = useRef<AbortController | null>(null);
   const started = useRef(false);
   const latest = useRef(s);
@@ -168,7 +178,7 @@ export function Workspace(props: {
             : "With the repository the guide reads the code behind signup, pricing and tracking, and spots what shipped that the data cannot show yet."}
       </div>
       <div className="row">
-        <button className="btn primary sm" onClick={() => setConnectOpen(true)}>Connect</button>
+        <button className="btn primary sm" onClick={() => openConnect(missing.length === 1 ? (missing[0] === "database" ? "supabase" : "github") : undefined)}>Connect</button>
         <button className="btn ghost sm" onClick={() => setConnectDismissed(true)}>Not now</button>
       </div>
     </div>
@@ -185,11 +195,11 @@ export function Workspace(props: {
         <span className="site">{s.site ? <img src={`https://www.google.com/s2/favicons?domain=${s.site.domain}&sz=32`} alt="" width={16} height={16} /> : <span aria-hidden>⎇</span>} {s.label}</span>
         <span className="spacer" />
         <div className="conns">
-          <span className={`chip clickable ${secrets.postgres ? "on" : s.schema ? "stale" : ""}`} onClick={() => setConnectOpen(true)} title={secrets.postgres?.supabase ? `Supabase · ${secrets.postgres.supabase.projectName ?? secrets.postgres.supabase.projectRef}` : secrets.postgres ? "Database connected" : s.schema ? "Database schema known; reconnect to run queries" : "Connect your database"}><span className="dot" /> {secrets.postgres?.supabase ? "Supabase" : "Database"}</span>
-          <span className={`chip clickable ${secrets.github ? "on" : s.repo ? "stale" : ""}`} onClick={() => setConnectOpen(true)} title={secrets.github ? `Repository ${secrets.github.repo}` : s.repo ? "Repository digest known; reconnect to read files" : "Connect your repository"}><span className="dot" /> GitHub</span>
+          <span className={`chip clickable ${secrets.postgres ? "on" : s.schema ? "stale" : ""}`} onClick={() => openConnect("supabase")} title={secrets.postgres?.supabase ? `Supabase · ${secrets.postgres.supabase.projectName ?? secrets.postgres.supabase.projectRef}` : secrets.postgres ? "Database connected" : s.schema ? "Database schema known; reconnect to run queries" : props.health?.oauth.supabase ? "Sign in with Supabase" : "Connect your database"}><span className="dot" /> {secrets.postgres?.supabase || (!secrets.postgres && props.health?.oauth.supabase) ? "Supabase" : "Database"}</span>
+          <span className={`chip clickable ${secrets.github ? "on" : s.repo ? "stale" : ""}`} onClick={() => openConnect("github")} title={secrets.github ? `Repository ${secrets.github.repo}` : s.repo ? "Repository digest known; reconnect to read files" : props.health?.oauth.github ? "Sign in with GitHub" : "Connect your repository"}><span className="dot" /> GitHub</span>
         </div>
         <span className="cost" title={`${tokens.toLocaleString()} tokens this audit · ${tokens ? Math.round((hit / Math.max(1, tokens)) * 100) : 0}% served from the provider's cache · ${s.costs.length} model calls`}>${usd.toFixed(usd < 0.1 ? 3 : 2)}</span>
-        <button className="btn ghost sm" onClick={() => setConnectOpen(true)}>Connect</button>
+        <button className="btn ghost sm" onClick={() => openConnect()}>Connect</button>
         <button className="btn ghost sm export" onClick={exportMd} title="Download the audit as markdown">Export</button>
         <button className="btn ghost sm panel-toggle" onClick={() => setShowPanel((v) => !v)} id="panel-toggle">{showPanel ? "Chat" : `To-dos (${s.todos.filter((t) => t.status !== "dismissed").length})`}</button>
       </header>
@@ -198,7 +208,7 @@ export function Workspace(props: {
         <TodoPanel todos={s.todos} brainIndex={props.brainIndex} crafting={crafting} promptsConfigured={promptsConfigured} onCraft={(ids) => void craft(ids)} onChange={(todos) => props.onUpdate({ todos })} onToast={say} />
       </div>
       {connectOpen && (
-        <ConnectDialog health={props.health} connections={secrets} schema={s.schema} repo={s.repo} remembered={store.isRemembered(s.id)} onClose={() => setConnectOpen(false)} onDb={onDb} onRepo={onRepo} />
+        <ConnectDialog health={props.health} connections={secrets} schema={s.schema} repo={s.repo} remembered={store.isRemembered(s.id)} pending={pendingOAuth} onClose={() => { setConnectOpen(false); setPendingOAuth(null); }} onDb={onDb} onRepo={onRepo} />
       )}
       {toast && <div className="toast">{toast}</div>}
     </div>

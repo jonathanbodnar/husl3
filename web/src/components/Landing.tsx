@@ -137,6 +137,7 @@ export function Landing(props: {
           </div>
         ) : (
           <form className="repoform" onSubmit={submitRepo}>
+            {!oauthGithub && <div className="row"><button type="button" className="btn primary" disabled title="Not configured on this server: set GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET">Connect GitHub</button><span className="muted small">Sign-in is not configured on this server yet; a repository name (and a token for private ones) works meanwhile.</span></div>}
             <label htmlFor="repo-entry" className="muted small">Repository (owner/name or GitHub URL). The guide reads the tree, manifest, README and recent commits, and scans the live site if the README names one.</label>
             <input id="repo-entry" type="text" autoFocus placeholder="owner/name" value={repo} onChange={(e) => setRepo(e.target.value)} aria-label="Your repository" />
             <input type="password" placeholder="github_pat_… (only for private repositories; read-only Contents + Metadata)" value={token} onChange={(e) => setToken(e.target.value)} aria-label="GitHub token" autoComplete="off" />
