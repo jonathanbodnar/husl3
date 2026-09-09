@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
 import type { AdDataset, ChatRequest, Scoreboard, ScoreboardEval, StageId, StatKind, StatSpec, StatUnit, Todo, ToolUi } from "../../shared/types.js";
+import { spliceAdSpend } from "../ads/spendSql.js";
 import { runAdStat } from "../stats/ads.js";
 import { evaluateScoreboard } from "../stats/readiness.js";
 import { runScoreboard } from "../stats/run.js";
@@ -289,12 +290,12 @@ async function fetchPage(args: Record<string, unknown>, ctx: ToolContext): Promi
 async function runSql(args: Record<string, unknown>, ctx: ToolContext, t0: number): Promise<ToolOutcome> {
   const conn = ctx.req.connections?.postgres;
   if (!conn || !hasDatabase(conn)) throw new Error("No database is connected");
-  const sql = String(args.sql ?? "");
+  const sql = spliceAdSpend(String(args.sql ?? ""), ctx.req.ads);
   const res = await runReadOnlyQuery(conn, sql, 200);
   const forModel = { purpose: args.purpose, columns: res.columns, rowCount: res.rowCount, truncated: res.truncated, rows: res.rows.slice(0, 60), note: res.rows.length > 60 ? "showing first 60 rows to the model; the founder sees up to 200" : undefined };
   return {
     content: modelJson(forModel),
-    ui: { name: "run_sql", ok: true, summary: String(args.purpose ?? "Query"), sql, columns: res.columns, rows: res.rows, rowCount: res.rowCount, truncated: res.truncated, ms: Date.now() - t0 },
+    ui: { name: "run_sql", ok: true, summary: String(args.purpose ?? "Query"), sql: String(args.sql ?? ""), columns: res.columns, rows: res.rows, rowCount: res.rowCount, truncated: res.truncated, ms: Date.now() - t0 },
   };
 }
 

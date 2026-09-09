@@ -1,4 +1,5 @@
 import type { Tool } from "../llm/client.js";
+import { AD_SPEND_COLUMNS } from "../ads/spendSql.js";
 import { bindingCatalog } from "../stats/readiness.js";
 
 const STAGES = ["s0", "s1", "s2", "s3", "s4", "s5", "s6"];
@@ -74,6 +75,7 @@ export function toolsFor(opts: { db: boolean; github: boolean; ads: boolean }): 
         description:
           `Build or change the founder's scoreboard: the brain's metric recipes bound to THEIR tables, run by the server, graded against the journey's readiness checks, and shown in a side panel. Set goal / activation / coreRequest and the IANA timezone the first time (the timezone is required: today is dropped and days are bucketed on it). Each stat has a kind with a strict SQL contract:
 number: one row with a numeric column "value" (optional "n"). Unit percent always means a 0–1 fraction (0.083, not 8.3), for every kind.
+Any SQL above may contain the token {{ad_spend}} where a table belongs: the server substitutes the uploaded ad rows as a table (${AD_SPEND_COLUMNS}). That is how cost per payer BY CAMPAIGN is built — one breakdown stat joining spend to the accounts whose attribution carries the campaign, returning label = campaign, value = spend ÷ payers, n = the payer count so the honesty rules can bite. Total the spend per campaign in a subquery BEFORE joining, or the join multiplies spend by the number of matching accounts. Never type the spend numbers yourself.
 ads: no SQL. Aggregates the founder's uploaded ad spend: set ads.measure (spend/impressions/clicks/platform_conversions) and optionally ads.groupBy (campaign → breakdown, platform → breakdown, day → series; omit for a total), ads.since/ads.until, ads.platform, ads.campaignContains.
 derived: no SQL. One stat divided by another: derived.numeratorStatId ÷ derived.denominatorStatId. This is how cost per payer and cost per activated user are built, because spend lives in the uploaded export and the outcome lives in the database, so no single query can hold both. Match the periods: give the ads stat the same since/until as the outcome query covers, or the ratio is meaningless.
 rate: one row with integer columns "numerator" and "denominator" (the server computes the share and applies the small-n rule).
@@ -147,7 +149,7 @@ ${bindingCatalog()}`,
         function: {
           name: "run_sql",
           description:
-            "Run one read-only SQL statement (SELECT / WITH / EXPLAIN) against the founder's Postgres database. Rows are capped at 200. Prefer aggregates with explicit date boundaries; name the timezone (e.g. AT TIME ZONE 'America/New_York'); exclude today from daily series.",
+            `Run one read-only SQL statement (SELECT / WITH / EXPLAIN) against the founder's Postgres database. Rows are capped at 200. Prefer aggregates with explicit date boundaries; name the timezone (e.g. AT TIME ZONE 'America/New_York'); exclude today from daily series.\nWhen ad spend has been uploaded you may write the token {{ad_spend}} anywhere a table belongs; the server replaces it with the uploaded rows as a table (${AD_SPEND_COLUMNS}), so spend can be joined to the accounts whose attribution column carries the campaign. Never type the spend numbers yourself.`,
           parameters: {
             type: "object",
             properties: {

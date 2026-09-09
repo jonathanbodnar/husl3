@@ -1,5 +1,6 @@
 import type { AdDataset, PostgresConnection, Scoreboard, StatResult, StatSpec } from "../../shared/types.js";
 import { runReadOnlyBatch } from "../db/postgres.js";
+import { spliceAdSpend } from "../ads/spendSql.js";
 import { runAdStat, runDerivedStat } from "./ads.js";
 
 /**
@@ -160,9 +161,15 @@ export async function runScoreboard(conn: PostgresConnection | undefined, board:
   if (!sqlStats.length || !conn) return finishDerived();
   const t0 = Date.now();
   // The SQL-level limit keeps the FIRST rows; a series is ascending, so a tight limit would keep the oldest days.
-  const batch = await runReadOnlyBatch(conn, sqlStats.map((s) => ({ id: s.id, sql: s.sql ?? "", limit: s.kind === "series" ? 2000 : 200 })), TIME_BUDGET_MS);
+  const prepared = sqlStats.map((s) => {
+    try { return { id: s.id, sql: spliceAdSpend(s.sql ?? "", ads), limit: s.kind === "series" ? 2000 : 200 }; }
+    catch (e) { results[s.id] = { specId: s.id, ok: false, computedAt, error: e instanceof Error ? e.message : String(e) }; return null; }
+  }).filter((x): x is { id: string; sql: string; limit: number } => x !== null);
+  if (!prepared.length) return finishDerived();
+  const batch = await runReadOnlyBatch(conn, prepared, TIME_BUDGET_MS);
   for (const s of sqlStats) {
     const r = batch[s.id];
+    if (!r && results[s.id]) continue;
     if (!r) { results[s.id] = { specId: s.id, ok: false, computedAt, error: "Not run" }; continue; }
     if (r.error) { results[s.id] = { specId: s.id, ok: false, computedAt, error: r.error, ms: r.ms }; continue; }
     const res = normalize(s, r.rows, r.columns, board.timezone, computedAt, r.ms);
