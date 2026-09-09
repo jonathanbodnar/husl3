@@ -90,6 +90,19 @@ export function ConnectDialog(props: {
     catch (e) { setGhMsg({ ok: false, text: e instanceof Error ? e.message : String(e) }); } finally { setGhBusy(false); }
   };
   const disconnectGh = () => { setGhToken(null); setRepos(null); setRepo(""); setPat(""); setGhMsg(null); props.onRepo(null, null, remember); };
+  /** Revoke the grant, then sign in again so GitHub shows the consent screen (with organization access) once more. */
+  const resetGithub = async () => {
+    const old = ghToken?.token;
+    setGhBusy(true); setGhMsg(null); setRepos(null);
+    try { const r = await startOAuth("github", { before: async () => { if (old) await api.githubRevoke(old).catch(() => {}); } }); await afterGithubAuth(r.github); }
+    catch (e) { setGhMsg({ ok: false, text: e instanceof Error ? e.message : String(e) }); setGhBusy(false); }
+  };
+  const reauthSupabase = async () => {
+    setDbBusy(true); setDbMsg(null); setProjects(null);
+    try { const r = await startOAuth("supabase"); await afterSupabaseAuth(r.supabase); } catch (e) { setDbMsg({ ok: false, text: e instanceof Error ? e.message : String(e) }); setDbBusy(false); }
+  };
+  const typedRepo = /^[\w.-]+\/[\w.-]+$/.test(repoFilter.trim()) && !(repos ?? []).some((r) => r.fullName.toLowerCase() === repoFilter.trim().toLowerCase()) ? repoFilter.trim() : null;
+  const grantUrl = oauth.githubClientId ? `https://github.com/settings/connections/applications/${oauth.githubClientId}` : "https://github.com/settings/applications";
 
   const filteredRepos = useMemo(() => {
     const q = repoFilter.trim().toLowerCase();
@@ -118,6 +131,7 @@ export function ConnectDialog(props: {
                   <div className="rowb">
                     <span className="ok">Supabase · {props.connections.postgres.supabase.projectName ?? props.connections.postgres.supabase.projectRef}</span>
                     <button className="btn sm" disabled={dbBusy} onClick={() => void afterSupabaseAuth(sbTokens)}>Switch project</button>
+                    <button className="btn sm" disabled={dbBusy} onClick={() => void reauthSupabase()} title="Sign in again to pick a different organization">Different organization</button>
                     <button className="btn sm" onClick={disconnectDb}>Disconnect</button>
                   </div>
                 ) : (
@@ -127,6 +141,7 @@ export function ConnectDialog(props: {
                       {(projects ?? []).map((p) => <option key={p.ref} value={p.ref}>{p.name}{p.orgName ? ` · ${p.orgName}` : ""}{p.region ? ` · ${p.region}` : ""}</option>)}
                     </select>
                     <button className="btn primary sm" disabled={dbBusy || !projectRef} onClick={useProject}>{busyLabel(dbBusy, "Use this project")}</button>
+                    <button className="btn ghost sm" disabled={dbBusy} onClick={() => void reauthSupabase()} title="Sign in again to pick a different organization">Different organization</button>
                     <button className="btn ghost sm" onClick={disconnectDb}>Cancel</button>
                   </div>
                 )}
@@ -169,6 +184,7 @@ export function ConnectDialog(props: {
                   <div className="rowb">
                     <span className="ok">GitHub{ghToken.login ? ` · ${ghToken.login}` : ""} · {props.connections.github.repo}</span>
                     <button className="btn sm" disabled={ghBusy} onClick={() => void afterGithubAuth({ token: ghToken.token, login: ghToken.login ?? "" })}>Switch repository</button>
+                    <button className="btn sm" disabled={ghBusy} onClick={() => void resetGithub()} title="Revoke this authorization and sign in again to choose organizations">Different organization</button>
                     <button className="btn sm" onClick={disconnectGh}>Disconnect</button>
                   </div>
                 ) : (
@@ -181,8 +197,10 @@ export function ConnectDialog(props: {
                           <span className="meta">{[r.language, r.pushedAt ? `pushed ${r.pushedAt.slice(0, 10)}` : null].filter(Boolean).join(" · ")}</span>
                         </button>
                       ))}
-                      {repos && !filteredRepos.length && <div className="note" style={{ padding: ".5rem" }}>No repository matches.</div>}
+                      {repos && !filteredRepos.length && !typedRepo && <div className="note" style={{ padding: ".5rem" }}>No repository matches.</div>}
+                      {typedRepo && <button type="button" className="repoitem" disabled={ghBusy} onClick={() => void useRepo(typedRepo, ghToken.token, "oauth", ghToken.login)}><span className="name">Use {typedRepo}</span><span className="meta">typed name</span></button>}
                     </div>
+                    <div className="note">Missing an organization's repositories? Chosen at the consent screen; <a href={grantUrl} target="_blank" rel="noreferrer">grant access on GitHub</a> or <button type="button" className="alt small" disabled={ghBusy} onClick={() => void resetGithub()}>choose organizations again</button>. You can also type owner/name above.</div>
                     <div className="rowb"><button className="btn ghost sm" onClick={disconnectGh}>Cancel</button>{ghBusy && <span className="note"><span className="spin" /> reading…</span>}</div>
                   </div>
                 )}

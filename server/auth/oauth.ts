@@ -75,6 +75,31 @@ auth.get("/github/callback", async (c) => {
   }
 });
 
+/**
+ * Revoke the app's grant for this token. GitHub skips the consent screen (where organization access is chosen)
+ * once an app is authorized, so this is the only way to let a founder pick a different organization.
+ */
+auth.post("/github/revoke", async (c) => {
+  if (!env.github.clientId || !env.github.clientSecret) return c.json({ error: "GitHub OAuth is not configured on this server." }, 503);
+  const token = c.req.header("x-github-token");
+  if (!token) return c.json({ error: "x-github-token header is required" }, 400);
+  try {
+    const res = await fetch(`${env.github.apiBase.replace(/\/$/, "")}/applications/${encodeURIComponent(env.github.clientId)}/grant`, {
+      method: "DELETE",
+      headers: {
+        authorization: `Basic ${Buffer.from(`${env.github.clientId}:${env.github.clientSecret}`).toString("base64")}`,
+        accept: "application/vnd.github+json", "content-type": "application/json", "user-agent": "VibeDistributionAudit/0.1", "x-github-api-version": "2022-11-28",
+      },
+      body: JSON.stringify({ access_token: token }),
+      signal: AbortSignal.timeout(20_000),
+    });
+    if (res.status === 204 || res.status === 404) return c.json({ ok: true });
+    return c.json({ error: `GitHub answered HTTP ${res.status} while revoking the authorization` }, 502);
+  } catch (e) {
+    return c.json({ error: msg(e) }, 502);
+  }
+});
+
 // ── Supabase (OAuth app registered in the organization; PKCE + Basic auth exchange) ──
 const sbBase = () => env.supabase.apiBase.replace(/\/$/, "");
 const sbBasic = () => `Basic ${Buffer.from(`${env.supabase.clientId}:${env.supabase.clientSecret}`).toString("base64")}`;

@@ -50,6 +50,12 @@ export function Landing(props: {
     try { await props.onStartRepo(fullName, gh.token, remember, gh.login, "oauth"); } catch (err) { setError(err instanceof Error ? err.message : String(err)); } finally { setBusy(false); }
   };
   const visibleRepos = (repos ?? []).filter((r) => !filter.trim() || r.fullName.toLowerCase().includes(filter.trim().toLowerCase())).slice(0, 30);
+  const typedRepo = /^[\w.-]+\/[\w.-]+$/.test(filter.trim()) && !(repos ?? []).some((r) => r.fullName.toLowerCase() === filter.trim().toLowerCase()) ? filter.trim() : null;
+  const grantUrl = props.health?.oauth.githubClientId ? `https://github.com/settings/connections/applications/${props.health.oauth.githubClientId}` : "https://github.com/settings/applications";
+  const resetGithub = async () => {
+    const old = gh?.token; setError(null); setRepos(null);
+    try { const r = await startOAuth("github", { before: async () => { if (old) await api.githubRevoke(old).catch(() => {}); } }); await afterAuth(r.github); } catch (err) { setError(err instanceof Error ? err.message : String(err)); }
+  };
   const needsCode = !!props.health?.accessCodeRequired && !store.accessCode();
 
   useEffect(() => {
@@ -130,8 +136,10 @@ export function Landing(props: {
                       <span className="meta">{[r.language, r.pushedAt ? `pushed ${r.pushedAt.slice(0, 10)}` : null].filter(Boolean).join(" · ")}</span>
                     </button>
                   ))}
-                  {repos && !visibleRepos.length && <div className="note" style={{ padding: ".5rem" }}>No repository matches.</div>}
+                  {repos && !visibleRepos.length && !typedRepo && <div className="note" style={{ padding: ".5rem" }}>No repository matches.</div>}
+                  {typedRepo && <button type="button" className="repoitem" disabled={busy} onClick={() => void pickRepo(typedRepo)}><span className="name">Use {typedRepo}</span><span className="meta">typed name</span></button>}
                 </div>
+                <div className="muted small">Missing an organization's repositories? <a href={grantUrl} target="_blank" rel="noreferrer">Grant access on GitHub</a> or <button type="button" className="alt" onClick={() => void resetGithub()}>choose organizations again</button>. You can also type owner/name above.</div>
               </>
             )}
           </div>

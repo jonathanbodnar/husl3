@@ -27,6 +27,7 @@ export const api = {
   introspectDb: (connection: PostgresConnection) => post<DbSchema>("/api/db/introspect", { connection }),
   githubRepos: async (token: string) => { const r = await fetch("/api/github/repos", { headers: { ...headers(), "x-github-token": token } }); if (!r.ok) throw new Error(await errorText(r)); return (await r.json()) as GithubRepoItem[]; },
   supabaseProjects: async (token: string) => { const r = await fetch("/api/supabase/projects", { headers: { ...headers(), "x-supabase-token": token } }); if (!r.ok) throw new Error(await errorText(r)); return (await r.json()) as SupabaseProjectItem[]; },
+  githubRevoke: async (token: string) => { const r = await fetch("/api/auth/github/revoke", { method: "POST", headers: { ...headers(), "x-github-token": token } }); if (!r.ok) throw new Error(await errorText(r)); },
   supabaseRefresh: (refreshToken: string) => post<{ accessToken: string; refreshToken?: string; expiresAt?: number }>("/api/auth/supabase/refresh", { refreshToken }),
   introspectRepo: (repo: string, token?: string) => post<RepoDigest>("/api/github/introspect", { repo, token }),
   prompts: (req: PromptsRequest) => post<PromptsResponse>("/api/prompts", req),

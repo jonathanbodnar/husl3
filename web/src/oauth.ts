@@ -7,10 +7,16 @@ type Ok<P extends Provider> = Extract<OAuthRelay, { provider: P; ok: true }>;
  * Opens the broker in a popup; the callback page posts the token back and closes.
  * If the popup is blocked, the whole tab navigates and the result is picked up from sessionStorage after the redirect.
  */
-export function startOAuth<P extends Provider>(provider: P): Promise<Ok<P>> {
+export function startOAuth<P extends Provider>(provider: P, opts: { before?: () => Promise<void> } = {}): Promise<Ok<P>> {
   return new Promise((resolve, reject) => {
-    const w = window.open(`/api/auth/${provider}/start`, "vd-oauth", "popup=yes,width=640,height=780");
-    if (!w) { window.location.assign(`/api/auth/${provider}/start`); return; }
+    const startUrl = `/api/auth/${provider}/start`;
+    // Open the window inside the click (popup blockers), then do any async preparation before navigating it.
+    const w = window.open(opts.before ? "about:blank" : startUrl, "vd-oauth", "popup=yes,width=640,height=780");
+    if (!w) { window.location.assign(startUrl); return; }
+    if (opts.before) {
+      try { w.document.write("<p style=\"font:15px system-ui;padding:2rem\">Preparing sign-in…</p>"); } catch { /* cross-origin later; ignore */ }
+      opts.before().catch(() => {}).then(() => { try { w.location.href = startUrl; } catch { /* window closed */ } });
+    }
     let settled = false;
     const finish = (fn: () => void) => { if (settled) return; settled = true; window.removeEventListener("message", onMsg); clearInterval(poll); fn(); };
     const onMsg = (e: MessageEvent) => {

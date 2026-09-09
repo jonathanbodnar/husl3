@@ -82,7 +82,7 @@ app.get("/api/health", (c) => {
     chat: { configured: !!chat.apiKey, model: chat.model, thinking: chat.thinking },
     prompts: { configured: !!prompts.apiKey, model: prompts.model, thinking: prompts.thinking, thinkingBudget: prompts.thinkingBudget },
     accessCodeRequired: !!env.accessCode,
-    oauth: { github: !!(env.github.clientId && env.github.clientSecret), supabase: !!(env.supabase.clientId && env.supabase.clientSecret) },
+    oauth: { github: !!(env.github.clientId && env.github.clientSecret), supabase: !!(env.supabase.clientId && env.supabase.clientSecret), githubClientId: env.github.clientId || undefined },
     budget: { dailyUsd: env.dailyBudgetUsd, spentTodayUsd: Math.round(budget.spentToday() * 10_000) / 10_000 },
   };
   return c.json(res);

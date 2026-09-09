@@ -181,6 +181,6 @@ export interface HealthResponse {
   prompts: { configured: boolean; model: string; thinking: "on" | "off"; thinkingBudget: number };
   accessCodeRequired: boolean;
   /** Which OAuth brokers this server has client credentials for. */
-  oauth: { github: boolean; supabase: boolean };
+  oauth: { github: boolean; supabase: boolean; /** public id, used to link to GitHub's "grant organization access" page */ githubClientId?: string };
   budget: { dailyUsd: number; spentTodayUsd: number };
 }
