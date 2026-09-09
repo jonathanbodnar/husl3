@@ -16,6 +16,18 @@ export function Workspace(props: {
 }) {
   const { session: s } = props;
   const [secrets, setSecrets] = useState<Connections>(() => store.secrets(s.id));
+  /**
+   * React state updates are async, and the auto-sent "I connected …" message runs from the closure
+   * captured before that update — so it would ship the OLD connections and the model would get no
+   * tools for what was just connected. Every write goes through applySecrets, which updates this ref
+   * synchronously; send() reads the ref, never the state.
+   */
+  const secretsRef = useRef(secrets);
+  const applySecrets = useCallback((next: Connections, remember: boolean) => {
+    secretsRef.current = next;
+    setSecrets(next);
+    store.setSecrets(latest.current.id, next, remember);
+  }, []);
   const [live, setLive] = useState<LiveSegment[] | null>(null);
   const [pendingUser, setPendingUser] = useState<string | null>(null);
   const [streaming, setStreaming] = useState(false);
@@ -45,17 +57,18 @@ export function Workspace(props: {
 
   /** Supabase Management API tokens expire; refresh shortly before, so a long audit never dies mid-query. */
   const freshSecrets = useCallback(async (): Promise<Connections> => {
-    const sb = secrets.postgres?.supabase;
+    const cur = secretsRef.current;
+    const sb = cur.postgres?.supabase;
     if (sb?.refreshToken && sb.expiresAt && sb.expiresAt - Date.now() < 5 * 60_000) {
       try {
         const t = await api.supabaseRefresh(sb.refreshToken);
-        const next: Connections = { ...secrets, postgres: { supabase: { ...sb, ...t } } };
-        setSecrets(next); store.setSecrets(latest.current.id, next, store.isRemembered(latest.current.id));
+        const next: Connections = { ...cur, postgres: { supabase: { ...sb, ...t } } };
+        applySecrets(next, store.isRemembered(latest.current.id));
         return next;
       } catch { /* fall through with the old token; the server reports expiry clearly */ }
     }
-    return secrets;
-  }, [secrets]);
+    return cur;
+  }, [applySecrets]);
 
   const send = useCallback(async (text: string, kickoff = false) => {
     if (streaming) return;
@@ -115,7 +128,7 @@ export function Workspace(props: {
     } finally {
       setStreaming(false); setLive(null); setPendingUser(null); abortRef.current = null;
     }
-  }, [props, secrets, streaming, freshSecrets]);
+  }, [props, streaming, freshSecrets]);
 
   // Opening turn, once, after the scan.
   useEffect(() => {
@@ -144,14 +157,14 @@ export function Workspace(props: {
   }, [props, say]);
 
   const onDb = (conn: Connections["postgres"] | null, schema: AuditSession["schema"], remember: boolean) => {
-    const next: Connections = { ...secrets, postgres: conn ?? undefined };
-    setSecrets(next); store.setSecrets(s.id, next, remember);
+    const next: Connections = { ...secretsRef.current, postgres: conn ?? undefined };
+    applySecrets(next, remember);
     props.onUpdate({ schema, links: { ...s.links, postgres: !!conn } });
     if (conn && schema) setTimeout(() => void send(`I connected my database (${schema.tables.length} tables${schema.authUsers != null ? `, ${schema.authUsers.toLocaleString()} accounts` : ""}). Place me by the numbers and check the current to-dos against the data before asking me anything else.`), 50);
   };
   const onRepo = (conn: Connections["github"] | null, digest: AuditSession["repo"], remember: boolean) => {
-    const next: Connections = { ...secrets, github: conn ?? undefined };
-    setSecrets(next); store.setSecrets(s.id, next, remember);
+    const next: Connections = { ...secretsRef.current, github: conn ?? undefined };
+    applySecrets(next, remember);
     props.onUpdate({ repo: digest, links: { ...s.links, githubRepo: conn?.repo } });
     const repo = conn?.repo;
     if (repo && digest) setTimeout(() => void send(`I connected my repository (${repo}). What shipped recently that the data cannot show yet, and what should I instrument before we go on?`), 50);

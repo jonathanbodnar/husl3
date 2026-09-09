@@ -136,8 +136,9 @@ function describeTable(args: Record<string, unknown>, ctx: ToolContext): ToolOut
 
 function ghCtx(ctx: ToolContext) {
   const gh = ctx.req.connections?.github;
-  if (!gh) throw new Error("No repository is connected");
-  return { repo: gh.repo, token: gh.token, branch: ctx.req.repo?.defaultBranch ?? "HEAD" };
+  const repo = gh?.repo ?? ctx.req.repo?.repo;
+  if (!repo) throw new Error("No repository is connected");
+  return { repo, token: gh?.token, branch: ctx.req.repo?.defaultBranch ?? "HEAD" };
 }
 
 async function ghRead(args: Record<string, unknown>, ctx: ToolContext): Promise<ToolOutcome> {

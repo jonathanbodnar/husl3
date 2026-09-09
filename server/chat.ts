@@ -47,7 +47,8 @@ export async function runChatTurn(req: ChatRequest, emit: (e: ChatEvent) => void
     ...toModelMessages(req.transcript ?? []),
     { role: "user", content: userText },
   ];
-  const tools = toolsFor({ db: hasDatabase(req.connections?.postgres), github: !!req.connections?.github?.repo });
+  // The repo digest alone enables the tools (public repositories read without a token); a token adds private access.
+  const tools = toolsFor({ db: hasDatabase(req.connections?.postgres), github: !!(req.connections?.github?.repo || req.repo?.repo) });
   let usage = zeroUsage();
   let usd = 0;
   const account = (u: Usage) => { usage = addUsage(usage, u); const c = costEvent("chat", cfg.model, u, cfg.prices); usd += c.usd; emit({ type: "usage", cost: c }); };
