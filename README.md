@@ -27,6 +27,17 @@ npm run dev               # API on :8787, web on :5173 (proxied)
 
 Production: `npm run build && npm start` (serves the built client and the API on `PORT`, default 8787). The `Dockerfile` and `railway.json` deploy as-is on Railway (`railway up`), or anywhere that runs a container. Set the same variables there.
 
+## The scoreboard: the plan through the founder's data
+
+The brain is not there to tell a founder what to do; it supplies metric recipes and readiness checks, and the founder's data decides which apply and what they say. Once a database is connected the guide's first job is the scoreboard:
+
+1. It names the money event, the activation definition and the core request for this product, and the reporting timezone.
+2. It binds the brain's recipes (`metrics[].id`, e.g. `activation_day0`) to the founder's real tables with the `update_scoreboard` tool. Each stat has a kind with a strict SQL contract: `number` (one row, `value`), `rate` (`numerator`, `denominator`), `series` (`day`, `value`), `funnel` (`step`, `count`), `breakdown` (`label`, `value`), or `assert` (a value the founder stated, shown as stated).
+3. The server runs every stat on one read-only connection, applies the honesty rules itself (today dropped in the reporting timezone; a share with a numerator under 5 or a denominator under 100 shown as counts, never a percentage), and grades the journey's readiness checks (`journey[].readiness[].check`) deterministically. **Stage by the numbers** is the earliest stage with a check the data does not clear; unmeasured checks are listed as gaps rather than pinning a founder with paying accounts at "before users".
+4. With a repository connected, the funnel is rebuilt from the code path: the files behind signup, the core action, the limit, checkout and tracking, and the event names they actually emit.
+
+The scoreboard lives in a tab beside the to-dos (stat tiles, sparkline, funnel and breakdown bars, graded readiness rows, every stat's why and SQL, refresh), is rendered into the model's context every turn, and feeds the prompt writer so prompts cite real numbers. Verified with the real conversation model on a seeded Postgres: it explored the schema, bound ten stats with correct contracts, fixed two failing ones in the same turn, and placed the founder from the graded numbers.
+
 ## Connecting data: OAuth first
 
 With the two OAuth apps registered (see `.env.example`), the connect dialog offers **Connect Supabase** and **Connect GitHub** buttons: a popup, an authorization, then a picker for the project or repository. The server only brokers the code-for-token exchange (it holds the client secrets); tokens are handed to the browser through a relay page and travel back inside the requests that need them. Supabase queries run through the Management API with `read_only: true` on top of the app's own SQL gate; Supabase tokens are refreshed by the client shortly before they expire. Without the OAuth apps configured, the dialog falls back to a Postgres connection string and a GitHub personal access token, and both remain available under "use … instead" for edge cases (any Postgres, a token for a single repo).
