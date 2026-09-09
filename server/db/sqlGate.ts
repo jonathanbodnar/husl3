@@ -22,13 +22,16 @@ const FORBIDDEN_CALLS = [
   "pg_create_restore_point", "pg_switch_wal", "pg_backup_start", "pg_backup_stop",
 ];
 
-/** Statement keywords that are not reads. */
+/**
+ * Words that can turn a statement that STARTS as a read into a write: DML inside a CTE
+ * (with x as (delete …)), SELECT … INTO, FOR UPDATE locks, and DDL. Everything else that is not a read
+ * (SET, COPY, BEGIN, VACUUM …) cannot appear inside a SELECT at all, so it is already excluded by the
+ * head check and the one-statement rule — and listing it here only blocked honest queries, because
+ * CASE … END, FETCH FIRST, and columns named start, end, comment, lock or set are all ordinary reads.
+ * The database-level read-only transaction remains the last line.
+ */
 const FORBIDDEN_KEYWORDS = [
-  "insert", "update", "delete", "drop", "alter", "create", "grant", "revoke", "truncate", "copy",
-  "call", "do", "vacuum", "analyze", "analyse", "refresh", "lock", "listen", "notify", "unlisten",
-  "set", "reset", "comment", "reindex", "cluster", "checkpoint", "discard", "prepare", "execute",
-  "deallocate", "declare", "fetch", "move", "close", "begin", "commit", "rollback", "savepoint",
-  "start", "end", "import", "merge", "security",
+  "insert", "update", "delete", "merge", "into", "truncate", "drop", "alter", "create", "grant", "revoke", "analyze", "analyse",
 ];
 
 const FORBIDDEN = new Set([...FORBIDDEN_CALLS, ...FORBIDDEN_KEYWORDS]);

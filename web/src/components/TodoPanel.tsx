@@ -12,6 +12,8 @@ export function TodoPanel(props: {
   onCraft: (ids?: string[]) => void;
   onChange: (todos: Todo[]) => void;
   onToast: (m: string) => void;
+  /** Rendered inside the tabbed side panel: no outer aside, no title (the tab is the title). */
+  embedded?: boolean;
 }) {
   const active = props.todos.filter((t) => t.status !== "dismissed");
   const needPrompt = props.todos.filter((t) => (t.status === "todo" || t.status === "doing") && (!t.prompt || t.promptStale));
@@ -24,11 +26,11 @@ export function TodoPanel(props: {
 
   const patch = (id: string, p: Partial<Todo>) => props.onChange(props.todos.map((t) => (t.id === id ? { ...t, ...p, updatedAt: new Date().toISOString() } : t)));
 
+  const Wrap = props.embedded ? "div" : "aside";
   return (
-    <aside className="panel">
+    <Wrap className={props.embedded ? "panelbody" : "panel"}>
       <div className="phead">
-        <h2>What to do</h2>
-        <span className="count">{active.length}</span>
+        {!props.embedded && <><h2>What to do</h2><span className="count">{active.length}</span></>}
         <span style={{ flex: 1 }} />
         <button
           className="btn primary sm"
@@ -50,7 +52,7 @@ export function TodoPanel(props: {
           </div>
         ))}
       </div>
-    </aside>
+    </Wrap>
   );
 }
 

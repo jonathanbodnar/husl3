@@ -106,6 +106,43 @@ export async function runReadOnlyQuery(conn: PostgresConnection, input: string, 
   });
 }
 
+export interface BatchItem { id: string; sql: string; limit?: number }
+export interface BatchResult { rows: Record<string, unknown>[]; columns: string[]; ms: number; error?: string }
+
+/**
+ * Runs several read-only statements on ONE connection (or one Management API session) so a scoreboard
+ * of a dozen stats does not open a dozen connections. Sequential by design: each statement is bounded
+ * by the 20-second statement timeout, and the whole batch by `budgetMs`; statements past the budget
+ * are reported, not run.
+ */
+export async function runReadOnlyBatch(conn: PostgresConnection, items: BatchItem[], budgetMs = 90_000): Promise<Record<string, BatchResult>> {
+  const out: Record<string, BatchResult> = {};
+  const started = Date.now();
+  const prepared = items.map((it) => {
+    try { const p = prepareReadOnlySql(it.sql); return { it, sql: p.kind === "select" ? `select * from (${p.sql}) as q limit ${(it.limit ?? 200) + 1}` : p.sql, error: undefined as string | undefined }; }
+    catch (e) { return { it, sql: "", error: e instanceof Error ? e.message : String(e) }; }
+  });
+  for (const p of prepared) if (p.error) out[p.it.id] = { rows: [], columns: [], ms: 0, error: p.error };
+  const runnable = prepared.filter((p) => !p.error);
+  if (!runnable.length) return out;
+  await withRunner(conn, async (run) => {
+    for (const p of runnable) {
+      if (Date.now() - started > budgetMs) { out[p.it.id] = { rows: [], columns: [], ms: 0, error: "Skipped: the scoreboard's time budget was used up by earlier stats; simplify them or run this one alone." }; continue; }
+      const t0 = Date.now();
+      try {
+        const { rows, columns } = await run(p.sql);
+        out[p.it.id] = { rows: rows.slice(0, p.it.limit ?? 200).map((r) => Object.fromEntries(Object.entries(r).map(([k, v]) => [k, jsonSafe(v)]))), columns, ms: Date.now() - t0 };
+      } catch (e) {
+        out[p.it.id] = { rows: [], columns: [], ms: Date.now() - t0, error: e instanceof Error ? e.message : String(e) };
+        // A failed statement aborts a Postgres transaction; the runner opened a single read-only one, so
+        // re-arm it before the next statement. The Management API path has no transaction to re-arm.
+        if (conn.connectionString) { try { await run("rollback"); await run("begin read only"); await run("set local statement_timeout = '20s'"); } catch { /* the next statement will report it */ } }
+      }
+    }
+  });
+  return out;
+}
+
 function jsonSafe(v: unknown): unknown {
   if (v == null) return v;
   if (v instanceof Date) return isNaN(v.getTime()) ? null : v.toISOString();

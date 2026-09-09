@@ -1,4 +1,5 @@
-import type { ChatRequest, DbSchema, RepoDigest, SiteDigest, Todo } from "../../shared/types.js";
+import type { ChatRequest, DbSchema, RepoDigest, Scoreboard, SiteDigest, Todo } from "../../shared/types.js";
+import { evaluateScoreboard } from "../stats/readiness.js";
 import { brainText, brainVersion } from "./render.js";
 
 const ROLE = `You are the guide inside Vibe Distribution: a conversational distribution audit for SaaS founders. You walk one founder through getting first users, activating them, monetizing, retaining, acquiring and scaling, using one body of evidence: the brain below, built from one AI SaaS that ran the method for 97 days and audited itself 209 times.
@@ -10,6 +11,9 @@ How you work
 - When a database is connected, measure instead of guessing: use run_sql with the schema in your context. Read-only. Start with counts and dates; apply the brain's conventions (name the timezone, drop today from daily series, never quote a rate with a numerator under 5 or a denominator under 100 without the counts). Say what a query showed in plain words with the counts, then what it means, then the move. If a query fails, fix it once, then move on.
 - When a repository is connected, use the commits to learn what shipped recently and read the files that implement signup, onboarding, pricing, checkout, limits and tracking before recommending changes to them. The most valuable thing you can tell a founder is which of their recent changes the data cannot show yet, and what to measure so it will.
 - Use fetch_page to read more of their site when a question depends on it (pricing page, signup flow, docs).
+- The scoreboard is how the plan adapts to this founder. The brain supplies metric recipes and readiness checks; their data decides which apply and what they say. When a database is connected and the scoreboard is empty, build it BEFORE placing them and before adding to-dos: name the money event, the core request and the activation definition for this product; set the reporting timezone; then bind the recipes for the money event, activation and the current stage's instrument_now list to their real tables with update_scoreboard (4 to 12 stats). Results and errors come back at once; fix a failing stat in the same turn. Readiness is graded for you from the scoreboard and shown at the top of every turn as "stage by the numbers"; place the founder by it, and say which checks are unmeasured rather than guessing them. A number that can decide a question is measured before any advice is given on it; the brain's move comes second, as the thing the number points to.
+- When a repository is connected as well, the funnel comes from the code, not from guesses: read the files behind signup, onboarding, the core action, the limit or paywall, checkout and tracking; learn the real steps and the event names actually emitted; rebuild the funnel stat from those steps in path order, and say in each stat's why which file or event it is bound to. If the code fires no event for a step, say so: that is a to-do (instrumentation), not a number.
+- The founder can refresh the scoreboard at any time and can read every stat's SQL. Never present a stated value as a measured one, and never quote a share the small-n rule forbids; give the counts.
 - On the opening turn, when no database or repository is connected, close by saying plainly that the placement stays provisional until you can read their repository and their data, and point them to Connect in the top bar. Say it once; on later turns ask again only when a question depends on it. When only one of the two is connected, ask for the other the same way, once.
 - When the audit started from a repository and no public site could be read, say so, work from the code, and ask for the live URL if one exists.
 - Voice: direct, specific, short. Plain prose, short paragraphs, small lists, markdown headings no larger than ###. No hype, no filler, no restating what they said. Blunt one-liners from the brain are welcome when they fit; explanations stay plain. End every reply with either one question or one clear next step.
@@ -20,7 +24,7 @@ Brain version: ${brainVersion}.`;
 /** Byte-identical across sessions so the provider's prefix cache holds. */
 export const STATIC_SYSTEM = `${ROLE}\n\n${brainText}`;
 
-export const KICKOFF_PROMPT = `Begin the audit. From the site digest and the repository digest (whichever exist): say in two or three sentences what the product appears to be, who it is for and how it charges. Place me provisionally on the journey (stage id and name) and ask the two or three questions that decide it. Then add the first three to five what-to-dos with update_todos: the moves the brain says matter at that stage for a product like this, each with evidence ids. If I connected a database or a repository, use them before asking anything they can answer.`;
+export const KICKOFF_PROMPT = `Begin the audit. From the site digest and the repository digest (whichever exist): say in two or three sentences what the product appears to be, who it is for and how it charges. If a database is connected, build the scoreboard first and place me by the numbers. Place me provisionally on the journey (stage id and name) and ask the two or three questions that decide it. Then add the first three to five what-to-dos with update_todos: the moves the brain says matter at that stage for a product like this, each with evidence ids. If I connected a database or a repository, use them before asking anything they can answer.`;
 
 const cap = (t: string | undefined | null, n: number) => (t ? (t.length > n ? t.slice(0, n) + " …" : t) : "");
 
@@ -58,6 +62,48 @@ export function renderRepo(repo: RepoDigest): string {
   return L.join("\n");
 }
 
+const pct = (v: number) => `${(v * 100).toFixed(v * 100 < 10 ? 1 : 0)}%`;
+const fmtVal = (v: number, unit: string) => (unit === "percent" ? pct(v) : unit === "usd" ? `$${v.toFixed(2)}` : Number.isInteger(v) ? String(v) : v.toFixed(2));
+
+export function renderScoreboard(board: Scoreboard | null | undefined, dbConnected: boolean): string {
+  if (!board || !board.stats.length) {
+    return dbConnected
+      ? "## Scoreboard\n(empty — a database is connected; build it with update_scoreboard before placing the founder or adding to-dos)"
+      : "## Scoreboard\n(empty — no database connected; ask for one when a number would decide the next move)";
+  }
+  const ev = evaluateScoreboard(board);
+  const L: string[] = [`## Scoreboard (${board.stats.length} stats; computed ${board.computedAt ? board.computedAt.slice(0, 16) + "Z" : "never"}${board.timezone ? `; reporting timezone ${board.timezone}` : ""})`];
+  if (board.goal) L.push(`Money event: ${board.goal}`);
+  if (board.activation) L.push(`Activation: ${board.activation}`);
+  if (board.coreRequest) L.push(`Core request: ${board.coreRequest}`);
+  for (const s of [...board.stats].sort((a, b) => a.order - b.order)) {
+    const r = board.results[s.id];
+    const tag = `${s.id}${s.metricId ? ` [${s.metricId}${s.field ? "." + s.field : ""}]` : ""}`;
+    if (!r) { L.push(`- ${tag} ${s.title}: not run`); continue; }
+    if (!r.ok) { L.push(`- ${tag} ${s.title}: FAILED — ${r.error}`); continue; }
+    if (r.points) {
+      const last = r.points.slice(-7).map((p) => p.value);
+      const prev = r.points.slice(-14, -7).map((p) => p.value);
+      const sum = (a: number[]) => a.reduce((x, y) => x + y, 0);
+      L.push(`- ${tag} ${s.title} (daily, ${r.points.length} days to ${r.points[r.points.length - 1].day}): last 7 = ${last.join(", ")}${prev.length === 7 ? ` (prior 7 total ${sum(prev)} → ${sum(last)})` : ""}${r.droppedToday ? "; today excluded" : ""}`);
+    } else if (r.steps) L.push(`- ${tag} ${s.title} (funnel): ${r.steps.map((st, i) => `${st.step} ${st.count}${i > 0 && st.fromPrev != null ? ` (${pct(st.fromPrev)} of previous)` : ""}`).join(" → ")}`);
+    else if (r.items) L.push(`- ${tag} ${s.title} (breakdown): ${r.items.map((i) => `${i.label} ${fmtVal(i.value, s.unit)}${i.n != null ? ` n=${i.n}` : ""}`).join("; ")}`);
+    else if (r.numerator != null) L.push(`- ${tag} ${s.title}: ${r.numerator}/${r.denominator}${r.smallN ? " — small n: quote the counts, not a percentage" : ` = ${pct(r.value!)}`}`);
+    else L.push(`- ${tag} ${s.title}: ${fmtVal(r.value ?? 0, s.unit)}${r.n != null ? ` (n=${r.n})` : ""}${s.kind === "assert" ? ` (STATED by the founder${s.source ? `: ${s.source}` : ""}, not measured)` : ""}`);
+    if (s.caveat) L.push(`  caveat: ${s.caveat}`);
+  }
+  L.push(`Stage by the numbers: ${ev.stageByNumbers ?? "not yet placeable (no readiness check measured)"}`);
+  const graded = ev.rows.filter((r) => r.status !== "unmeasured");
+  if (graded.length) L.push(`Readiness graded: ${graded.map((r) => `${r.stage} ${r.metric}.${r.field} ${r.status}${r.actual != null ? ` (${fmtVal(r.actual, "count")} ${r.op} ${r.value})` : ""}`).join("; ")}`);
+  if (ev.stageByNumbers) {
+    const un = ev.rows.filter((r) => r.stage === ev.stageByNumbers && r.status === "unmeasured");
+    if (un.length) L.push(`Unmeasured at ${ev.stageByNumbers}: ${un.map((r) => `${r.metric}.${r.field}`).join(", ")} — bind these before advancing anyone`);
+    const unbound = ev.unbound[ev.stageByNumbers] ?? [];
+    if (unbound.length) L.push(`instrument_now not yet bound at ${ev.stageByNumbers}: ${unbound.join(", ")}`);
+  }
+  return L.join("\n");
+}
+
 export function renderTodos(todos: Todo[]): string {
   if (!todos.length) return "## What-to-do list\n(empty — add the first items with update_todos)";
   const sorted = [...todos].sort((a, b) => a.order - b.order);
@@ -74,6 +120,7 @@ export function sessionSystem(req: ChatRequest): string {
   if (req.schema && (req.connections?.postgres?.connectionString || req.connections?.postgres?.supabase)) parts.push(renderSchema(req.schema));
   // The digest goes in whenever it exists: the repository tools are enabled from it too, so context and tools must agree.
   if (req.repo) parts.push(renderRepo(req.repo));
+  parts.push(renderScoreboard(req.scoreboard, !!(req.connections?.postgres?.connectionString || req.connections?.postgres?.supabase)));
   parts.push(renderTodos(req.todos));
   return parts.join("\n\n");
 }

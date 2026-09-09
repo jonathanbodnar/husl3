@@ -3,6 +3,7 @@ import type { ToolUi } from "../../../shared/types";
 
 const LABELS: Record<string, string> = {
   update_todos: "What-to-do list",
+  update_scoreboard: "Scoreboard",
   run_sql: "Query",
   db_describe_table: "Table",
   fetch_page: "Read page",
@@ -10,7 +11,7 @@ const LABELS: Record<string, string> = {
   github_search_files: "Find files",
   github_list_commits: "Commits",
 };
-const ICONS: Record<string, string> = { update_todos: "☑", run_sql: "⌕", db_describe_table: "▤", fetch_page: "⇲", github_read_file: "⌘", github_search_files: "⌕", github_list_commits: "⎇" };
+const ICONS: Record<string, string> = { update_todos: "☑", update_scoreboard: "▦", run_sql: "⌕", db_describe_table: "▤", fetch_page: "⇲", github_read_file: "⌘", github_search_files: "⌕", github_list_commits: "⎇" };
 
 export function ToolCard({ name, ui, pending, args }: { name: string; ui?: ToolUi; pending?: boolean; args?: Record<string, unknown> }) {
   const [open, setOpen] = useState(false);

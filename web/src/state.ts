@@ -1,4 +1,4 @@
-import type { Connections, CostEvent, DbSchema, RepoDigest, SiteDigest, Todo, TranscriptMessage } from "../../shared/types";
+import type { Connections, CostEvent, DbSchema, RepoDigest, Scoreboard, ScoreboardEval, SiteDigest, Todo, TranscriptMessage } from "../../shared/types";
 
 export interface AuditSession {
   id: string;
@@ -12,6 +12,8 @@ export interface AuditSession {
   /** Non-secret half of connections (repo name; whether a database was connected). */
   links: { postgres: boolean; githubRepo?: string };
   todos: Todo[];
+  scoreboard?: Scoreboard | null;
+  scoreboardEval?: ScoreboardEval | null;
   transcript: TranscriptMessage[];
   costs: CostEvent[];
 }

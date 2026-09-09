@@ -76,7 +76,7 @@ export const env = {
     scan: num("RATE_GLOBAL_SCAN_PER_HOUR", 300),
     prompts: num("RATE_GLOBAL_PROMPTS_PER_HOUR", 120),
   },
-  maxToolRounds: num("MAX_TOOL_ROUNDS", 8),
+  maxToolRounds: num("MAX_TOOL_ROUNDS", 12),
   /** Verify TLS certificates on founder Postgres connections. Off by default: managed providers
    *  (Supabase pooler, Neon, RDS) present certificates this client has no root for. */
   dbStrictTls: onoff("DB_STRICT_TLS", "off") === "on",

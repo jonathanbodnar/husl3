@@ -106,6 +106,99 @@ export interface RepoDigest {
   fetchedAt: string;
 }
 
+// ── Scoreboard: the brain's metric recipes bound to the founder's own tables ──────────────────
+/**
+ * number    one row: value (numeric), optional n (count basis)
+ * rate      one row: numerator, denominator (integers) — the server computes the share and applies the small-n rule
+ * series    rows: day (YYYY-MM-DD), value — ascending; the server drops today in the reporting timezone
+ * funnel    rows: step (text), count — in path order; per-step conversion is computed
+ * breakdown rows: label (text), value (numeric), optional n
+ * assert    no SQL: a value the founder stated in conversation (shown as stated, never as measured)
+ */
+export type StatKind = "number" | "rate" | "series" | "funnel" | "breakdown" | "assert";
+export type StatUnit = "percent" | "count" | "usd" | "minutes" | "days" | "score";
+
+export interface StatSpec {
+  id: string;
+  title: string;
+  kind: StatKind;
+  unit: StatUnit;
+  /** SQL following the kind's contract. Absent for assert. */
+  sql?: string;
+  /** Brain metric recipe this implements (metrics[].id), when it does. */
+  metricId?: string;
+  /** Readiness field this stat measures (journey[].readiness[].check.field), when it does. */
+  field?: string;
+  /** One or two sentences: why this number matters for this product now, and what it is bound to (tables, events, files). */
+  why: string;
+  caveat?: string;
+  stage?: StageId;
+  order: number;
+  /** assert only */
+  value?: number;
+  source?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface StatResult {
+  specId: string;
+  ok: boolean;
+  error?: string;
+  computedAt: string;
+  ms?: number;
+  /** number / rate / assert */
+  value?: number;
+  n?: number;
+  numerator?: number;
+  denominator?: number;
+  /** true when the small-n rule forbids quoting the share as a percentage */
+  smallN?: boolean;
+  /** series */
+  points?: { day: string; value: number }[];
+  droppedToday?: boolean;
+  /** funnel */
+  steps?: { step: string; count: number; fromPrev?: number; fromFirst?: number }[];
+  /** breakdown */
+  items?: { label: string; value: number; n?: number }[];
+}
+
+export interface Scoreboard {
+  /** The money event this product is judged by, in the founder's words. */
+  goal?: string;
+  /** What "activated" means for this product. */
+  activation?: string;
+  /** What a core request is here. */
+  coreRequest?: string;
+  /** Reporting timezone (IANA), used by the server to drop today from series. */
+  timezone?: string;
+  stats: StatSpec[];
+  results: Record<string, StatResult>;
+  computedAt?: string;
+}
+
+export type ReadinessStatus = "pass" | "fail" | "unmeasured" | "small_n" | "stated";
+export interface ReadinessRow {
+  stage: StageId;
+  metric: string;
+  field: string;
+  op: string;
+  value: number;
+  threshold: string;
+  note?: string;
+  status: ReadinessStatus;
+  actual?: number;
+  statId?: string;
+}
+export interface ScoreboardEval {
+  /** Earliest stage with an unmet or unmeasured readiness check; null when nothing is measured yet. */
+  stageByNumbers: StageId | null;
+  rows: ReadinessRow[];
+  /** Per stage, the instrument_now metric ids with no bound stat. */
+  unbound: Record<string, string[]>;
+  measuredCount: number;
+}
+
 export interface Usage { promptHit: number; promptMiss: number; completion: number; reasoning?: number }
 export interface CostEvent { model: string; usage: Usage; usd: number; at: string; kind: "chat" | "prompts" }
 
@@ -138,8 +231,9 @@ export type ChatEvent =
   | { type: "tool_start"; id: string; name: string; args: Record<string, unknown> }
   | { type: "tool_result"; id: string; name: string; ui: ToolUi }
   | { type: "todos"; todos: Todo[] }
+  | { type: "scoreboard"; scoreboard: Scoreboard; eval: ScoreboardEval }
   | { type: "usage"; cost: CostEvent }
-  | { type: "done"; messages: TranscriptMessage[]; todos: Todo[] }
+  | { type: "done"; messages: TranscriptMessage[]; todos: Todo[]; scoreboard?: Scoreboard }
   | { type: "error"; message: string };
 
 export interface ChatRequest {
@@ -149,6 +243,7 @@ export interface ChatRequest {
   schema?: DbSchema | null;
   repo?: RepoDigest | null;
   todos: Todo[];
+  scoreboard?: Scoreboard | null;
   transcript: TranscriptMessage[];
   message: string;
   /** First turn after the scan: the server supplies the opening instruction. */
@@ -164,6 +259,7 @@ export interface PromptsRequest {
   schema?: DbSchema | null;
   repo?: RepoDigest | null;
   todos: Todo[];
+  scoreboard?: Scoreboard | null;
   transcript: TranscriptMessage[];
   /** Subset to (re)write; defaults to every active item without a fresh prompt. */
   todoIds?: string[];

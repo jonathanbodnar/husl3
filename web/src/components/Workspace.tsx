@@ -4,6 +4,7 @@ import { startOAuth } from "../oauth";
 import { api, type BrainIndex } from "../api";
 import { store, totalUsd, type AuditSession } from "../state";
 import { Chat, type LiveSegment } from "./Chat";
+import { ScoreboardPanel } from "./Scoreboard";
 import { ConnectDialog } from "./ConnectDialog";
 import { TodoPanel } from "./TodoPanel";
 
@@ -63,6 +64,8 @@ export function Workspace(props: {
   const [crafting, setCrafting] = useState(false);
   const [showPanel, setShowPanel] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
+  const [tab, setTab] = useState<"todo" | "scoreboard">("todo");
+  const [refreshing, setRefreshing] = useState(false);
   const [connectDismissed, setConnectDismissed] = useState(false);
   const [pendingOAuth, setPendingOAuth] = useState<{ provider: "github" | "supabase"; promise: Promise<OAuthRelay> } | null>(null);
   /** Opens the dialog; when the provider's sign-in is configured and not yet connected, starts it in this click (popup blockers need the gesture). */
@@ -114,6 +117,7 @@ export function Workspace(props: {
       schema: cur.schema,
       repo: cur.repo,
       todos: cur.todos,
+      scoreboard: cur.scoreboard ?? null,
       transcript: cur.transcript,
       message: text,
       kickoff,
@@ -146,6 +150,10 @@ export function Workspace(props: {
           case "todos":
             props.onUpdate((prev) => ({ ...prev, todos: mergeTodos(e.todos, prev.todos) }));
             break;
+          case "scoreboard":
+            props.onUpdate({ scoreboard: e.scoreboard, scoreboardEval: e.eval });
+            if (e.scoreboard.stats.length) setTab("scoreboard");
+            break;
           case "usage":
             costs.push(e.cost);
             break;
@@ -154,7 +162,7 @@ export function Workspace(props: {
             break;
           case "done":
             settled = true;
-            props.onUpdate((prev) => ({ ...prev, transcript: [...prev.transcript, ...e.messages], todos: mergeTodos(e.todos, prev.todos), costs: [...prev.costs, ...costs], updatedAt: new Date().toISOString() }));
+            props.onUpdate((prev) => ({ ...prev, transcript: [...prev.transcript, ...e.messages], todos: mergeTodos(e.todos, prev.todos), scoreboard: e.scoreboard ?? prev.scoreboard, costs: [...prev.costs, ...costs], updatedAt: new Date().toISOString() }));
             break;
         }
       }, ctrl.signal);
@@ -191,7 +199,7 @@ export function Workspace(props: {
     const cur = latest.current;
     setCrafting(true);
     try {
-      const res = await api.prompts({ site: cur.site, schema: cur.schema, repo: cur.repo, todos: cur.todos, transcript: cur.transcript, todoIds: ids });
+      const res = await api.prompts({ site: cur.site, schema: cur.schema, repo: cur.repo, todos: cur.todos, scoreboard: cur.scoreboard ?? null, transcript: cur.transcript, todoIds: ids });
       const byId = new Map(res.prompts.map((p) => [p.todoId, p.prompt]));
       props.onUpdate((prev) => ({
         ...prev,
@@ -203,11 +211,24 @@ export function Workspace(props: {
     } catch (e) { say(e instanceof Error ? e.message : String(e)); } finally { setCrafting(false); }
   }, [props, say]);
 
+  const refreshScoreboard = useCallback(async () => {
+    const cur = latest.current;
+    if (!cur.scoreboard?.stats.length) return;
+    setRefreshing(true);
+    try {
+      const creds = await freshSecrets();
+      const r = await api.runStats(creds.postgres, cur.scoreboard);
+      props.onUpdate((prev) => ({ ...prev, scoreboard: prev.scoreboard ? { ...prev.scoreboard, results: r.results, computedAt: r.computedAt } : prev.scoreboard, scoreboardEval: r.eval }));
+      const failed = Object.values(r.results).filter((x) => !x.ok).length;
+      say(failed ? `Scoreboard refreshed; ${failed} stat${failed === 1 ? "" : "s"} failed` : "Scoreboard refreshed");
+    } catch (e) { say(e instanceof Error ? e.message : String(e)); } finally { setRefreshing(false); }
+  }, [props, say, freshSecrets]);
+
   const onDb = (conn: Connections["postgres"] | null, schema: AuditSession["schema"], remember: boolean) => {
     const next: Connections = { ...secretsRef.current, postgres: conn ?? undefined };
     applySecrets(next, remember);
     props.onUpdate({ schema, links: { ...s.links, postgres: !!conn } });
-    if (conn && schema) setTimeout(() => void send(`I connected my database (${schema.tables.length} tables${schema.authUsers != null ? `, ${schema.authUsers.toLocaleString()} accounts` : ""}). Place me by the numbers and check the current to-dos against the data before asking me anything else.`), 50);
+    if (conn && schema) setTimeout(() => void send(`I connected my database (${schema.tables.length} tables${schema.authUsers != null ? `, ${schema.authUsers.toLocaleString()} accounts` : ""}). Build my scoreboard first: name the money event and activation for this product, bind the brain's recipes to my tables, run them, and place me by the numbers. Then re-read the current to-dos against what the data says.`), 50);
   };
   const onRepo = (conn: Connections["github"] | null, digest: AuditSession["repo"], remember: boolean) => {
     const next: Connections = { ...secretsRef.current, github: conn ?? undefined };
@@ -216,7 +237,7 @@ export function Workspace(props: {
     // request from being rejected as malformed when the founder only means to drop the credential.
     props.onUpdate({ repo: digest ?? (s.site ? null : s.repo), links: { ...s.links, githubRepo: conn?.repo } });
     const repo = conn?.repo;
-    if (repo && digest) setTimeout(() => void send(`I connected my repository (${repo}). What shipped recently that the data cannot show yet, and what should I instrument before we go on?`), 50);
+    if (repo && digest) setTimeout(() => void send(`I connected my repository (${repo}). Read the code behind signup, the core action, the limit or paywall, checkout and tracking; rebuild the funnel from the real steps and event names${latest.current.scoreboard?.stats.length ? " and update the scoreboard" : ""}; then tell me what shipped recently that the data cannot show yet, and what to instrument.`), 50);
   };
 
   const exportMd = () => {
@@ -267,7 +288,15 @@ export function Workspace(props: {
       </header>
       <div className={`main${showPanel ? " show-panel" : ""}`}>
         <Chat transcript={s.transcript} live={live} pendingUser={pendingUser} streaming={streaming} error={error} disabled={!chatConfigured} notice={connectNotice} onSend={(t) => void send(t)} onStop={stop} />
-        <TodoPanel todos={s.todos} brainIndex={props.brainIndex} crafting={crafting} promptsConfigured={promptsConfigured} onCraft={(ids) => void craft(ids)} onChange={(todos) => props.onUpdate({ todos })} onToast={say} />
+        <aside className="panel">
+          <div className="tabs" role="tablist">
+            <button role="tab" aria-selected={tab === "todo"} className={tab === "todo" ? "on" : ""} onClick={() => setTab("todo")}>What to do <span className="count">{s.todos.filter((t) => t.status !== "dismissed").length}</span></button>
+            <button role="tab" aria-selected={tab === "scoreboard"} className={tab === "scoreboard" ? "on" : ""} onClick={() => setTab("scoreboard")}>Scoreboard {s.scoreboard?.stats.length ? <span className="count">{s.scoreboard.stats.length}</span> : null}</button>
+          </div>
+          {tab === "todo"
+            ? <TodoPanel todos={s.todos} brainIndex={props.brainIndex} crafting={crafting} promptsConfigured={promptsConfigured} onCraft={(ids) => void craft(ids)} onChange={(todos) => props.onUpdate({ todos })} onToast={say} embedded />
+            : <div className="plist"><ScoreboardPanel board={s.scoreboard ?? null} evaluation={s.scoreboardEval ?? null} brainIndex={props.brainIndex} dbConnected={!!secrets.postgres} refreshing={refreshing} onRefresh={() => void refreshScoreboard()} /></div>}
+        </aside>
       </div>
       {connectOpen && (
         <ConnectDialog health={props.health} onRemember={(r) => applySecrets(secretsRef.current, r)} connections={secrets} schema={s.schema} repo={s.repo} remembered={store.isRemembered(s.id)} pending={pendingOAuth} onClose={() => { setConnectOpen(false); setPendingOAuth(null); }} onDb={onDb} onRepo={onRepo} />

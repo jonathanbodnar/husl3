@@ -11,6 +11,8 @@ import { DailyBudget } from "./cost.js";
 import { introspect, validateConnectionString } from "./db/postgres.js";
 import { env } from "./env.js";
 import { introspectRepo, listRepos, parseRepo } from "./github/client.js";
+import { evaluateScoreboard } from "./stats/readiness.js";
+import { runScoreboard } from "./stats/run.js";
 import { craftPrompts } from "./prompts/craft.js";
 import { scanSite } from "./site/scan.js";
 
@@ -150,6 +152,19 @@ app.get("/api/supabase/projects", async (c) => {
   const token = c.req.header("x-supabase-token");
   if (!token) return errJson("x-supabase-token header is required", 400);
   try { return c.json(await sbListProjects(token)); } catch (e) { return targetError(msg(e)); }
+});
+
+app.post("/api/stats/run", async (c) => {
+  { const throttled = throttle("scan", ipOf(c), "requests"); if (throttled) return throttled; }
+  const b = await body<{ connection?: PostgresConnection; scoreboard?: { stats?: unknown[]; timezone?: string }; only?: string[] }>(c);
+  if (!b?.scoreboard || !Array.isArray(b.scoreboard.stats)) return errJson("scoreboard.stats is required", 400);
+  const board = { ...(b.scoreboard as import("../shared/types.js").Scoreboard), results: {} as Record<string, import("../shared/types.js").StatResult> };
+  if (board.stats.length > 12) return errJson("At most 12 stats", 400);
+  try {
+    const results = await runScoreboard(b.connection, board, Array.isArray(b.only) ? b.only.map(String) : undefined);
+    const merged = { ...board, results, computedAt: new Date().toISOString() };
+    return c.json({ results, computedAt: merged.computedAt, eval: evaluateScoreboard(merged) });
+  } catch (e) { return targetError(`Could not run the scoreboard: ${redact(msg(e))}`); }
 });
 
 app.post("/api/db/introspect", async (c) => {

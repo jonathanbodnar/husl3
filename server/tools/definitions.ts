@@ -1,4 +1,5 @@
 import type { Tool } from "../llm/client.js";
+import { bindingCatalog } from "../stats/readiness.js";
 
 const STAGES = ["s0", "s1", "s2", "s3", "s4", "s5", "s6"];
 
@@ -46,6 +47,55 @@ export function toolsFor(opts: { db: boolean; github: boolean }): Tool[] {
     },
   ];
   if (opts.db) {
+    tools.push({
+      type: "function",
+      function: {
+        name: "update_scoreboard",
+        description:
+          `Build or change the founder's scoreboard: the brain's metric recipes bound to THEIR tables, run by the server, graded against the journey's readiness checks, and shown in a side panel. Set goal / activation / coreRequest / timezone the first time. Each stat has a kind with a strict SQL contract:
+number: one row with a numeric column "value" (optional "n").
+rate: one row with integer columns "numerator" and "denominator" (the server computes the share and applies the small-n rule).
+series: rows "day" (date) and "value", ascending, one per calendar day in the reporting timezone (the server drops today).
+funnel: rows "step" (text) and "count", one per step in path order, first step = the widest.
+breakdown: rows "label" and "value" (optional "n").
+assert: no SQL; a value the founder stated, with source. Shown as stated, never as measured.
+Rules for every SQL: name the reporting timezone (AT TIME ZONE '<tz>'); day zero is the signup's calendar day in that zone; exclude internal accounts and bots where the schema lets you; never quote a share the small-n rule forbids (the server marks it). Bind metricId and field to the catalog below so readiness is graded; results and errors come back to you at once, so fix a failing stat in the same turn. Keep 4 to 12 stats: the money event first, then activation, then the stage's instrument_now list.
+${bindingCatalog()}`,
+        parameters: {
+          type: "object",
+          properties: {
+            goal: { type: "string", description: "The money event, in the founder's words (set once, update when it changes)" },
+            activation: { type: "string", description: "What activated means for this product" },
+            coreRequest: { type: "string", description: "What a core request is here" },
+            timezone: { type: "string", description: "IANA reporting timezone, e.g. America/New_York" },
+            ops: {
+              type: "array",
+              items: {
+                type: "object",
+                properties: {
+                  op: { type: "string", enum: ["add", "update", "remove", "reorder"] },
+                  id: { type: "string", description: "Existing stat id (update / remove)" },
+                  ids: { type: "array", items: { type: "string" }, description: "Full new order (reorder)" },
+                  title: { type: "string" },
+                  kind: { type: "string", enum: ["number", "rate", "series", "funnel", "breakdown", "assert"] },
+                  unit: { type: "string", enum: ["percent", "count", "usd", "minutes", "days", "score"] },
+                  sql: { type: "string" },
+                  metricId: { type: "string" },
+                  field: { type: "string" },
+                  why: { type: "string", description: "Why this number matters for this product now, and what it is bound to (tables, events, files)" },
+                  caveat: { type: "string" },
+                  stage: { type: "string", enum: STAGES },
+                  value: { type: "number", description: "assert only" },
+                  source: { type: "string", description: "assert only: who said it and when" },
+                },
+                required: ["op"],
+              },
+            },
+          },
+          required: ["ops"],
+        },
+      },
+    });
     tools.push(
       {
         type: "function",
